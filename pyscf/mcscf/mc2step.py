@@ -20,7 +20,7 @@ import time
 from functools import reduce
 import numpy
 import pyscf.lib.logger as logger
-from pyscf.mcscf import mc1step
+from pyscf.mcscf import mc1step, addons
 
 
 def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
@@ -37,7 +37,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     mo = mo_coeff
     nmo = mo.shape[1]
     eris = casscf.ao2mo(mo)
-    e_tot, e_cas, fcivec = casscf.casci(mo, ci0, eris, log, locals())
+    e_tot, e_cas, fcivec = casscf.casci(mo, ci0, eris, log, locals())    
     if casscf.ncas == nmo and not casscf.internal_rotation:
         if casscf.canonicalization:
             log.debug('CASSCF canonicalization')
@@ -58,47 +58,60 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     casdm1 = 0
     r0 = None
 
+    #Lan generates targeted rdms
+    rdm1Target_AO, rdm2Target_AO = addons.make_rdm12(casscf, mo, fcivec)
+    casdm1Target, casdm2Target = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
+    
     t2m = t1m = log.timer('Initializing 2-step CASSCF', *cput0)
     imacro = 0
     while not conv and imacro < casscf.max_cycle_macro:
         imacro += 1
         njk = 0
         t3m = t2m
+        omega = e_tot
         casdm1_old = casdm1
         casdm1, casdm2 = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
         norm_ddm = numpy.linalg.norm(casdm1 - casdm1_old)
         t3m = log.timer('update CAS DM', *t3m)
         max_cycle_micro = 1 # casscf.micro_cycle_scheduler(locals())
         max_stepsize = casscf.max_stepsize_scheduler(locals())
-        for imicro in range(max_cycle_micro):
-            rota = casscf.rotate_orb_cc(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
-                                        eris, r0, conv_tol_grad*.3, max_stepsize, log)
-            u, g_orb, njk1, r0 = next(rota)
-            rota.close()
-            njk += njk1
-            norm_t = numpy.linalg.norm(u-numpy.eye(nmo))
-            norm_gorb = numpy.linalg.norm(g_orb)
-            if imicro == 0:
-                norm_gorb0 = norm_gorb
-            de = numpy.dot(casscf.pack_uniq_var(u), g_orb)
-            t3m = log.timer('orbital rotation', *t3m)
 
-            eris = None
-            u = u.copy()
-            g_orb = g_orb.copy()
-            mo = casscf.rotate_mo(mo, u, log)
-            eris = casscf.ao2mo(mo)
-            t3m = log.timer('update eri', *t3m)
+        import os
+        select = False #bool(int(os.getenv('select'))) # will get from env
+        if(select): #put my own GMRES and line search here:
+            print "Using GMRES"
+            
+        else: # using standard pyscf
+        
+            for imicro in range(max_cycle_micro):
+                rota = casscf.rotate_orb_cc(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
+                                            eris, r0, conv_tol_grad*.3, max_stepsize, log)
+                u, g_orb, njk1, r0 = next(rota)
+                rota.close()
+                njk += njk1
+                norm_t = numpy.linalg.norm(u-numpy.eye(nmo))
+                norm_gorb = numpy.linalg.norm(g_orb)
+                if imicro == 0:
+                    norm_gorb0 = norm_gorb
+                de = numpy.dot(casscf.pack_uniq_var(u), g_orb)
+                t3m = log.timer('orbital rotation', *t3m)
+                
+                eris = None
+                u = u.copy()
+                g_orb = g_orb.copy()
+                mo = casscf.rotate_mo(mo, u, log)
+                eris = casscf.ao2mo(mo)
+                t3m = log.timer('update eri', *t3m)
+                
+                log.debug('micro %d  ~dE=%5.3g  |u-1|=%5.3g  |g[o]|=%5.3g  |dm1|=%5.3g',
+                          imicro, de, norm_t, norm_gorb, norm_ddm)
+                
+                if callable(callback):
+                    callback(locals())
 
-            log.debug('micro %d  ~dE=%5.3g  |u-1|=%5.3g  |g[o]|=%5.3g  |dm1|=%5.3g',
-                      imicro, de, norm_t, norm_gorb, norm_ddm)
-
-            if callable(callback):
-                callback(locals())
-
-            t2m = log.timer('micro iter %d'%imicro, *t2m)
-            if norm_t < 1e-4 or abs(de) < tol*.4 or norm_gorb < conv_tol_grad*.2:
-                break
+                t2m = log.timer('micro iter %d'%imicro, *t2m)
+                if norm_t < 1e-4 or abs(de) < tol*.4 or norm_gorb < conv_tol_grad*.2:
+                    break
 
         totinner += njk
         totmicro += imicro + 1
