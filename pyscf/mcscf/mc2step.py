@@ -23,6 +23,7 @@ import pyscf.lib.logger as logger
 from pyscf.mcscf import mc1step, addons
 
 
+
 def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
            ci0=None, callback=None, verbose=None, dump_chk=True):
     if verbose is None:
@@ -51,7 +52,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     if conv_tol_grad is None:
         conv_tol_grad = numpy.sqrt(tol)
         logger.info(casscf, 'Set conv_tol_grad to %g', conv_tol_grad)
-    conv_tol_ddm = conv_tol_grad * 3
+    conv_tol_ddm = conv_tol_grad #* 3
     conv = False
     de, elast = e_tot, e_tot
     totmicro = totinner = 0
@@ -59,7 +60,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     r0 = None
 
     #Lan generates targeted rdms
-    rdm1Target_AO, rdm2Target_AO = addons.make_rdm12(casscf, mo, fcivec)
+    rdm1Target_AO = addons.make_rdm12(casscf, mo, fcivec) #, rdm2Target_AO
     casdm1Target, casdm2Target = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
     
     t2m = t1m = log.timer('Initializing 2-step CASSCF', *cput0)
@@ -73,19 +74,53 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
         casdm1, casdm2 = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
         norm_ddm = numpy.linalg.norm(casdm1 - casdm1_old)
         t3m = log.timer('update CAS DM', *t3m)
-        max_cycle_micro = 1 # casscf.micro_cycle_scheduler(locals())
+        max_cycle_micro = casscf.micro_cycle_scheduler(locals())
         max_stepsize = casscf.max_stepsize_scheduler(locals())
 
-        import os
-        select = False #bool(int(os.getenv('select'))) # will get from env
-        if(select): #put my own GMRES and line search here:
+        if(casscf.is_use_gmres): 
             print "Using GMRES"
-            
+            for imicro in range(max_cycle_micro):
+                print 'imicro', imicro
+                u, g_orb = casscf.rotate_orb_gmres(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
+                                                   eris, imacro, r0, conv_tol_grad*.3, max_stepsize, log)
+                
+                norm_gorb = numpy.linalg.norm(g_orb)
+                log.debug(' |g|=%5.3g', norm_gorb)
+                if imicro == 0:
+                    norm_gorb0 = norm_gorb
+                eris = None
+                u = u.copy()
+                g_orb = g_orb.copy()
+                mo = casscf.rotate_mo(mo, u, log=None)                
+                eris = casscf.ao2mo(mo)
+                t3m = log.timer('update eri', *t3m)
+                norm_t = numpy.linalg.norm(u-numpy.eye(nmo))
+                de = numpy.dot(casscf.pack_uniq_var(u), g_orb)
+                #save current imicro
+                norm_gorb_old =  norm_gorb
+                u_old = u
+                g_orb_old = g_orb
+
+                if norm_gorb < 1e-04: #norm_t < 1e-4 or abs(de) < tol*.4 or 
+                    break
+            print "new molecular orbitals"
+            from pyscf import tools
+            tools.dump_mat.dump_mo(casscf.mol, mo, label=casscf.mol.ao_labels(), digits=6)
+            if imacro%5 == 0:
+                fname='mo_iter_'+str(imacro)+'.txt'
+                with open(fname, 'w') as f:
+                    for i in range(mo.shape[0]):
+                        for j in range(mo.shape[1]):
+                            f.write(" %20.10f" % mo[i,j])
+                    f.write("\n")
+
+
         else: # using standard pyscf
         
             for imicro in range(max_cycle_micro):
                 rota = casscf.rotate_orb_cc(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
                                             eris, r0, conv_tol_grad*.3, max_stepsize, log)
+                #exit()
                 u, g_orb, njk1, r0 = next(rota)
                 rota.close()
                 njk += njk1
@@ -121,6 +156,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
         t2m = t1m = log.timer('macro iter %d'%imacro, *t1m)
 
         de, elast = e_tot - elast, e_tot
+
         if (abs(de) < tol and
             norm_gorb < conv_tol_grad and norm_ddm < conv_tol_ddm):
             conv = True
@@ -134,6 +170,13 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
             callback(locals())
 
     if conv:
+        fname='mo_conv.txt'
+        with open(fname, 'w') as f:
+            for i in range(mo.shape[0]):
+                for j in range(mo.shape[1]):
+                    f.write(" %20.10f" % mo[i,j])
+            f.write("\n")
+            
         log.info('2-step CASSCF converged in %d macro (%d JK %d micro) steps',
                  imacro, totinner, totmicro)
     else:

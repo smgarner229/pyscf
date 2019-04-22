@@ -85,7 +85,7 @@ def gen_g_hop(casscf, mo, u, casdm1, casdm2, eris, get_g=False):
     g[:,ncore:nocc] = numpy.dot(h1e_mo[:,ncore:nocc]+eris.vhf_c[:,ncore:nocc],casdm1)
     g[:,ncore:nocc] += g_dm2
     
-    #Lan needs to get g 
+    #Lan needs to get g only
     if get_g:
         return g
 
@@ -170,8 +170,10 @@ def gen_g_hop(casscf, mo, u, casdm1, casdm2, eris, get_g=False):
 # Does this term contribute to internal rotation?
 #    h_diag[ncore:nocc,ncore:nocc] -= v_diag[:,ncore:nocc]*2
 
+
     g_orb = casscf.pack_uniq_var(g-g.T)
     h_diag = casscf.pack_uniq_var(h_diag)
+    #print "g shape", g.shape[0], g.shape[1], g_orb.shape[0]
 
     def h_op(x):
         x1 = casscf.unpack_uniq_var(x)
@@ -207,6 +209,384 @@ def gen_g_hop(casscf, mo, u, casdm1, casdm2, eris, get_g=False):
         return casscf.pack_uniq_var(x2)
 
     return g_orb, gorb_update, h_op, h_diag
+
+# BGN ES-CASSCF orbital optimizer
+
+def genMinRes(casscf, bvec, xguess, linear_transform, inner_product=None, precondition=None, thresh=1.0e-6, maxiter=1000):
+  """
+  Solves the linear system A x = b via the generalized minimal residual method, written by Eric Neuscamman.
+
+  required inputs:
+
+    bvec                the vector b
+    xguess              an initial guess for the vector x
+    linear_transform    function that performs the linear transformation A x
+
+  optional inputs:
+
+    inner_product       function of two inputs that computes their inner product, defaults to vector dot product
+    precondition        function of one input (e.g. x) that returns an approximation to  A^(-1) x, defaults to the identity
+    thresh              error threshold below which to stop the iterations, defaults to 1.0e-6
+    maxiter             maximum number of iterations, defaults to 20
+
+  Returns the solution vector x.
+  """
+  import numpy as np
+  log = logger.new_logger(casscf, verbose=None)
+  
+  # default is to use no preconditioning
+  if precondition is None:
+    precondition = lambda x: x
+
+  # default inner product is the simple vector dot product
+  if inner_product is None:
+    inner_product = lambda x, y: np.sum( x * y )
+
+  # create a function to reshape vectors into the same shape as the input
+  rsInput = lambda x: np.reshape(x, bvec.shape)
+
+  # create a function to reshape vectors into the shape used internally
+  rsInternal = lambda x: np.reshape(x, [bvec.size, 1] )
+
+  # create a function to take inner products
+  ip = lambda x, y: inner_product( rsInput(x), rsInput(y) )
+
+  # create a function to evaluate a vector's norm
+  norm = lambda x: np.sqrt( ip(x,x) )
+
+  # create a function to apply the linear transformation and reshape
+  lt = lambda x: rsInternal( linear_transform( rsInput(x) ) )
+
+  # get initial c vector
+  c = np.reshape( np.array( [ norm(xguess) ] ), [1,1] )
+
+  # get first Krylov vector
+  Y = np.reshape( xguess / c[0,0], [bvec.size, 1] )
+
+  # get linear transformation of first Krylov vector
+  AY = lt(Y[:,0:1])
+
+  # iterate
+  for iteration in range(maxiter+1):
+
+    # get linear transform on current x vector
+    Ax = np.dot(AY,c)
+
+    # get residual
+    r = rsInternal(bvec) - Ax
+
+    # get residual norm and check for convergence
+    res_norm = norm(r)
+    log.debug("iteration %4i       res_norm = %12.6e", iteration, res_norm )
+    sys.stdout.flush()
+    if res_norm < thresh:
+      log.info( "genMinRes converged after %i iterations", iteration)
+      return rsInput(np.dot(Y,c))
+
+    # stop if the maximum number of iterations has been reached
+    if iteration == maxiter:
+      log.info("genMinRes reached the maximum number of iterations.")
+      log.info("Returning the current best estimate to the solution.")
+      return rsInput(np.dot(Y,c))
+
+    # get next krylov vector
+    q = rsInternal( precondition( rsInput(r) ) )
+
+    # orthonormalize new krylov vector against existing krylov vectors
+    for i in range(Y.shape[1]):
+      q = q - ip(Y[:,i:i+1], q) * Y[:,i:i+1]
+    q = q / norm(q)
+
+    # save the new Krylov vector
+    Y = np.concatenate( [ Y, q ], 1 )
+
+    # save the linear transformation of the new Krylov vector
+    AY = np.concatenate( [ AY, lt(q) ], 1 )
+
+    # get the SVD of the matrix of linearly transformed Krylov vectors
+    U, sigma, VT = np.linalg.svd(AY, full_matrices=False)
+
+    # get the pseudo-inverse of the singular values
+    inv_sigma = np.zeros([sigma.size, 1])
+    for i in range(sigma.size):
+      if np.abs( sigma[i] / sigma[0] ) > 1.0e-8:
+        inv_sigma[i,0] = 1.0 / sigma[i]
+
+    # get the new c vector
+    c = np.dot( np.transpose(VT), inv_sigma * np.dot( np.transpose(U), rsInternal(bvec) ) )
+
+def lineSearch_naive(casscf, dr, fcivec, u, gorb_update):
+    log = logger.new_logger(casscf, verbose=None)
+    u_new = casscf.update_rotate_matrix(dr, u)
+    gorb = gorb_update(u_new, fcivec())    
+    norm_gorb = numpy.linalg.norm(gorb)
+    log.debug(' before line search  |g|=%5.3g', norm_gorb)
+    if norm_gorb < 1e-04:
+        return u_new, gorb
+    
+    alpha_min = 1
+    norm_gorb_min = norm_gorb
+    alpha = 0
+    while alpha < 2:
+        u_new = casscf.update_rotate_matrix(alpha*dr, u)
+        gorb = gorb_update(u_new, fcivec())    
+        norm_gorb = numpy.linalg.norm(gorb)
+        #log.debug("alpha = %5.4f     norm_gorb = %12.6e", alpha, norm_gorb )
+        if norm_gorb < norm_gorb_min:
+            norm_gorb_min = norm_gorb
+            alpha_min = alpha
+        alpha += 0.1        
+
+    alpha = alpha_min
+    u_new = casscf.update_rotate_matrix(alpha*dr, u)
+    gorb = gorb_update(u_new, fcivec())    
+    norm_gorb = numpy.linalg.norm(gorb)
+    log.info(" Best step length = %5.4f       norm_gorb = %5.6f", alpha, norm_gorb )
+    
+    return u_new, gorb
+
+def lineSearch(casscf, dr, fcivec, u, gorb_update):
+    log = logger.new_logger(casscf, verbose=None)
+    ncore = casscf.ncore
+    ncas  = casscf.ncas
+    nocc  = ncore+ncas
+
+    u_new = casscf.update_rotate_matrix(dr, u)
+    gorb = gorb_update(u_new, fcivec())    
+    norm_gorb = numpy.linalg.norm(gorb)
+    log.debug(' before line search  |g|=%5.3g', norm_gorb)
+    if norm_gorb < 1e-06:
+        return u_new, gorb
+
+    def dgorb_dalpha(alpha):
+        dalpha = 1e-07
+        u_new  = casscf.update_rotate_matrix((alpha+dalpha)*dr, u)
+        gorb   = gorb_update(u_new, fcivec())    
+        norm_gorb = numpy.linalg.norm(gorb)
+        
+        u_new  = casscf.update_rotate_matrix(alpha*dr, u)
+        gorb   = gorb_update(u_new, fcivec())    
+        norm_gorb -= numpy.linalg.norm(gorb)
+
+        return norm_gorb/dalpha 
+    
+
+    alpha_upper = 0
+    alpha_lower = 0
+
+    alpha = 0.
+    list_bound = []
+    list_norm_min = []
+    while alpha <= 2:
+        dnorm  = dgorb_dalpha(alpha)
+        u_new  = casscf.update_rotate_matrix(alpha*dr, u)
+        gorb   = gorb_update(u_new, fcivec())    
+        norm_gorb = numpy.linalg.norm(gorb)
+        if alpha > 0.:
+            if dnorm_old < 0 and dnorm > 0:
+                list_bound.append([alpha_old, alpha])
+                list_norm_min.append(norm_gorb)
+            elif dnorm_old > 0 and dnorm < 0:
+                list_bound.append([alpha, alpha_old])
+                list_norm_min.append(norm_gorb)
+        dnorm_old  = dnorm
+        alpha_old = alpha
+        alpha  += 0.02    
+
+    
+    if (len(list_bound) != 0):
+
+        # find the global minimum of norm_gorb
+        from operator import itemgetter
+        idx = min(enumerate(list_norm_min), key=itemgetter(1))[0]
+        alpha_lower = list_bound[idx][0]
+        alpha_upper = list_bound[idx][1]
+        log.info(" global minimum of norm_gorb is in [%5.4f, %5.4f]", alpha_lower, alpha_upper)
+        log.info(" perform bisection to find the best step length")
+        
+        alpha = 0.5*(alpha_upper + alpha_lower)
+        dnorm = dgorb_dalpha(alpha)
+        while abs(dnorm) > 1e-04:
+            if dnorm < 0:
+                alpha_lower = alpha
+            else:
+                alpha_upper = alpha
+            alpha = 0.5*(alpha_upper + alpha_lower)
+            dnorm = dgorb_dalpha(alpha)
+            u_new = casscf.update_rotate_matrix(alpha*dr, u)
+            gorb = gorb_update(u_new, fcivec())    
+            norm_gorb = numpy.linalg.norm(gorb)
+            log.debug("alpha = %5.4f  dnorm_gorb = %12.6f  norm_gorb = %5.6f",  alpha, dnorm, norm_gorb )
+    else:
+        log.info('there are no bounds => alpha = 1')
+        alpha = 1
+
+    u_new = casscf.update_rotate_matrix(alpha*dr, u)
+    gorb = gorb_update(u_new, fcivec())    
+    norm_gorb = numpy.linalg.norm(gorb)
+    log.info(" Best step length = %5.4f       norm_gorb = %5.6f", alpha, norm_gorb )
+    
+    return u_new, gorb
+
+def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_guess=None,
+                     conv_tol_grad=1e-4, max_stepsize=None, verbose=None):
+
+    log = logger.new_logger(casscf, verbose)
+    #log.debug('we are here')
+    if max_stepsize is None:
+        max_stepsize = casscf.max_stepsize
+    
+    t3m = (time.clock(), time.time())
+    u = 1
+    g_orb, gorb_update, h_op, h_diag = \
+            casscf.gen_g_hop(mo, u, fcasdm1(), fcasdm2(), eris)
+    norm_gorb = numpy.linalg.norm(g_orb)
+    log.debug(' before gmres  |g|=%5.3g', norm_gorb)
+    t3m = log.timer('gen h_op', *t3m)
+    
+    def precond(x):
+        hdiagd = h_diag - casscf.gmres_hess_shift
+        hdiagd[abs(hdiagd)<1e-8] = 1e-8
+        x = x/hdiagd
+        norm_x = numpy.linalg.norm(x)
+        x *= 1/norm_x
+        #if norm_x < 1e-2:
+        #    x *= 1e-2/norm_x
+        return x
+    
+    jkcount = 0
+    x0_guess = g_orb
+    dr = 0
+    
+    #call GMRES
+    bvec = -g_orb
+    norm_gorb  = numpy.linalg.norm(g_orb)
+
+    tol = casscf.gmres_conv_tol
+    if casscf.is_gmres_conv_dynm:
+        tol = 0.25*norm_gorb
+        log.info('genMinRes tol is dynamically changed: %5.3g', tol ) 
+        
+    if casscf.is_gmres_precond:
+        dr = genMinRes(casscf, bvec, x0_guess, h_op, thresh=tol, maxiter=casscf.gmres_max_cycle, precondition=precond)
+    else:
+        dr = genMinRes(casscf, bvec, x0_guess, h_op, thresh=tol, maxiter=casscf.gmres_max_cycle)
+
+    #call line search
+    if casscf.is_line_search:
+        u_new, g_orb = lineSearch_naive(casscf, dr, fcivec, u, gorb_update)
+    else:
+        #if numpy.amax(abs(dr)) > 0.05:
+        #    dr *= 0.1/numpy.amax(abs(dr))
+        u_new = casscf.update_rotate_matrix(dr, u)
+        g_orb = gorb_update(u_new, fcivec())    
+
+    norm_gorb = numpy.linalg.norm(g_orb)
+    log.debug(' after gmres + linesearch  |g|=%5.3g', norm_gorb)
+    
+    return u_new, g_orb
+
+#Lan's routine to target state
+def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nroots, eris):
+    log = logger.new_logger(casscf, verbose=None)
+    norb  = mo_coeff.shape[1]
+    ncore = casscf.ncore
+    ncas  = casscf.ncas
+    nocc  = ncore+ncas
+    omega = envs['omega']
+    rdm1Target_AO = envs['rdm1Target_AO'] # in AOs
+    #rdm2Target_AO = envs['rdm2Target_AO'] # in AOs 
+    casdm1Target  = envs['casdm1Target'] # in MOs
+    casdm2Target  = envs['casdm2Target'] # in MOs 
+
+    def rota_rdms(mo_coeff):
+        from numpy.linalg import inv
+        mo_coeff_inv = inv(mo_coeff)
+	rdm1Target = reduce(numpy.dot, (mo_coeff_inv, rdm1Target_AO, mo_coeff_inv.T))
+
+        return rdm1Target
+    
+    def eval_Hsqr(s):
+        wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T)))
+        casdm1 = casscf.fcisolver.make_rdm1(fcivec[s], ncas, casscf.nelecas)
+        casdm2 = casscf.fcisolver.make_rdm2(fcivec[s], ncas, casscf.nelecas)
+        g = gen_g_hop(casscf, mo_coeff, 1, casdm1, casdm2, eris, get_g=True)
+        gorb = casscf.pack_uniq_var(g-g.T)
+        Hsqr = numpy.sum(numpy.square(gorb)) / wfn_norm
+        gorbNorm = numpy.linalg.norm(gorb)
+        
+        return Hsqr, gorbNorm
+
+    rdm1Target = rota_rdms(mo_coeff)
+
+    W_list = []
+    s_list = []
+    for s in xrange(nroots):
+        ss   = casscf.fcisolver.spin_square(fcivec[s], ncas, casscf.nelecas)
+        casdm1 = casscf.fcisolver.make_rdm1(fcivec[s], ncas, casscf.nelecas)
+        casdm2 = casscf.fcisolver.make_rdm2(fcivec[s], ncas, casscf.nelecas)
+        #rdm1_AO, rdm2_AO = addons.make_rdm12(casscf, mo_coeff, fcivec[s])
+        rdm1_MO, rdm2_MO = addons._make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, norb)
+        
+        wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T)))
+        #ddmNorm = 1./ncas * numpy.linalg.norm(rdm1_AO - rdm1Target_AO) 
+        ddmNorm = 1./ncas * numpy.linalg.norm(rdm1_MO - rdm1Target) 
+        W = numpy.square(omega - e_tot[s]) + eval_Hsqr(s)[0] + ddmNorm
+        if casscf.is_only_ddm:
+            W = ddmNorm
+        print
+        log.info('Root %d : (omega-E)^2 = %.6f Hsqr = %.6f W = %.6f ddmNorm = %.6f S^2 = %.6f',
+                 s, numpy.square(omega - e_tot[s]), eval_Hsqr(s)[0], W, ddmNorm, ss[0])
+        print
+        if abs(ss[0] - casscf.target_state_spin) < 1e-2:
+            W_list.append(W)
+            s_list.append(s)
+        print "Natural orbital analysis: "
+        nat_orbs = casscf.cas_natorb(mo_coeff, fcivec[s])
+        print
+        print "CI vector"
+        print fcivec[s]
+        print 'wfn_norm = ', wfn_norm
+        print
+        
+    assert(len(W_list) == len(s_list))
+    
+    W_min = W_list[0]
+    for i in xrange(len(W_list)):
+        #print 'w_min', W_min, W_list[0], target_state
+        if abs(W_list[i]) <= abs(W_min):
+            target_state = s_list[i]
+            W_min   = W_list[i]
+                
+    return target_state
+
+#not used#    def eval_energy(alpha, dalpha=0): # objective function
+#not used#        alpha += dalpha
+#not used#        u_new = casscf.update_rotate_matrix(alpha*dr, u)
+#not used#        mo_coeff_new = casscf.rotate_mo(mo_coeff, u_new)
+#not used#        energy_core  = casscf.energy_nuc()
+#not used#        h1e_ao  = casscf.get_hcore()
+#not used#        if(ncore > 0):
+#not used#            mo_core = mo_coeff_new[:,:ncore]
+#not used#            core_dm = numpy.dot(mo_core, mo_core.T) * 2
+#not used#            energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_hcore())
+#not used#            energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_veff(casscf.mol)) * .5
+#not used#            h1e_ao      += casscf.get_veff(casscf.mol, core_dm)
+#not used#    
+#not used#        h1e = reduce(numpy.dot, (mo_coeff_new[:,ncore:nocc].T, h1e_ao, mo_coeff_new[:,ncore:nocc]))
+#not used#        eri = ao2mo.kernel(casscf.mol, mo_coeff_new[:,ncore:nocc], compact=False)
+#not used#        eri = numpy.reshape(eri, (ncas, ncas, ncas, ncas))
+#not used#        
+#not used#        #rdm1, rdm2 = make_rdm12(casscf, s)
+#not used#        casdm1 = casscf.fcisolver.make_rdm1(fcivec(), ncas, casscf.nelecas)
+#not used#        casdm2 = casscf.fcisolver.make_rdm2(fcivec(), ncas, casscf.nelecas)
+#not used#        H_1e = numpy.einsum('ik,ik->',     casdm1, h1e)  #[:ncas,:ncas]
+#not used#        H_2e = numpy.einsum('ijkl,ijkl->', casdm2, eri) # 2. W_2e [:ncas,:ncas,:ncas,:ncas]
+#not used#        
+#not used#        return energy_core + H_1e + 0.5 * H_2e 
+#not used#
+
+# END ES_CASSCF orbital optimizer
 
 def rotate_orb_cc(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, x0_guess=None,
                   conv_tol_grad=1e-4, max_stepsize=None, verbose=None):
@@ -527,129 +907,6 @@ def as_scanner(mc):
             return e_tot
     return CASSCF_Scanner(mc)
 
-#Lan's routine to target state
-def target_state(casscf, mo_coeff, fcivec, e_tot, envs, Target, nroots, eris):
-    log = logger.new_logger(casscf, verbose=None)
-    norb  = mo_coeff.shape[1]
-    ncore = casscf.ncore
-    ncas  = casscf.ncas
-    nocc  = ncore+ncas
-    #mol = casscf.mol
-    omega = envs['omega']
-    rdm1Target_AO = envs['rdm1Target_AO'] # in AOs
-    rdm2Target_AO = envs['rdm2Target_AO'] # in AOs 
-    casdm1Target  = envs['casdm1Target'] # in MOs
-    casdm2Target  = envs['casdm2Target'] # in MOs 
-
-    mo_core = mo_coeff[:,:ncore]
-    core_dm = numpy.dot(mo_core, mo_core.T) * 2
-
-    energy_core  = casscf.mol.get_enuc()
-    energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_hcore())
-    energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_veff(casscf.mol)) * .5
-
-    #debug## 1e ints
-    #debug#h1e_ao  = casscf.get_hcore() + casscf.get_veff(casscf.mol, core_dm)
-    #debug#h1e = reduce(numpy.dot, (mo_coeff.T, h1e_ao, mo_coeff))
-    #debug#
-    #debug## 2e ints
-    #debug#eri_tmp = ao2mo.kernel(casscf.mol, mo_coeff,compact=False)
-    #debug#npair = norb*(norb+1)//2
-    #debug#if eri_tmp.ndim == 2:
-    #debug#    eri = numpy.zeros((norb, norb, norb, norb)) # don't like this allocation too, to much
-    #debug#    assert(eri_tmp.size == npair**2)
-    #debug#    ij = 0
-    #debug#    for i in range(norb):
-    #debug#        for j in range(0, i+1):
-    #debug#            kl = 0
-    #debug#            for k in range(0, norb):
-    #debug#                for l in range(0, k+1):
-    #debug#                    eri[i,j,k,l] = eri_tmp[ij,kl]
-    #debug#                    eri[j,i,k,l] = eri_tmp[ij,kl]
-    #debug#                    eri[i,j,l,k] = eri_tmp[ij,kl]
-    #debug#                    eri[j,i,l,k] = eri_tmp[ij,kl]
-    #debug#                    eri[k,l,i,j] = eri_tmp[ij,kl]
-    #debug#                    eri[k,l,j,i] = eri_tmp[ij,kl]
-    #debug#                    eri[l,k,i,j] = eri_tmp[ij,kl]
-    #debug#                    eri[l,k,j,i] = eri_tmp[ij,kl]
-    #debug#                    kl += 1
-    #debug#            ij += 1
-    #debug#else:
-    #debug#    eri = numpy.reshape(eri_tmp, (norb, norb, norb, norb)) 
-
-    def rota_rdms(mo_coeff):
-        from numpy.linalg import inv
-        mo_coeff_inv = inv(mo_coeff)
-
-	rdm1Target = reduce(numpy.dot, (mo_coeff_inv, rdm1Target_AO, mo_coeff_inv.T))
-
-	#not use#rdm2Target = numpy.matmul(numpy.transpose(U), numpy.reshape(rdm2_old,(norb,-1)))
-        #not use#rdm2Target = numpy.matmul(numpy.reshape(rdm2_new,(-1,norb)), U)
-        #not use#rdm2Target = numpy.reshape(rdm2_new,(norb,norb,norb,norb)).transpose(2,3,0,1)
-        #not use#rdm2Target = numpy.matmul(numpy.transpose(U), numpy.reshape(rdm2_new,(norb,-1)))
-        #not use#rdm2Target = numpy.matmul(numpy.reshape(rdm2_new,(-1,norb)), U)
-	#not use#rdm2Target = numpy.reshape(rdm2_new, (norb,norb,norb,norb))
-
-        return rdm1Target
-    
-    def eval_Hsqr(s):
-        wfn_norm = numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T))
-        casdm1 = casscf.fcisolver.make_rdm1(fcivec[s], ncas, casscf.nelecas)
-        casdm2 = casscf.fcisolver.make_rdm2(fcivec[s], ncas, casscf.nelecas)
-        #debug# rdm1, rdm2 = addons._make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, norb)
-        #debug# H_1e = numpy.einsum('ik,vk->iv',     rdm1[:nocc,:nocc], h1e[nocc:,:nocc]) 
-        #debug# H_2e = numpy.einsum('ijkl,vjkl->iv', rdm2[:nocc,:nocc,:nocc,:nocc], eri[nocc:,:nocc,:nocc,:nocc])
-        #debug# #H_1e = numpy.einsum('ik,vk->iv',     casdm1, h1e[nocc:,ncore:nocc])
-        #debug# #H_2e = numpy.einsum('ijkl,vjkl->iv', casdm2, eris.ppaa[nocc:,:ncas,:ncas,:ncas])
-        #debug# g = numpy.zeros((norb,norb))
-        #debug# g[:nocc,nocc:] = H_1e + H_2e
-        
-        g = gen_g_hop(casscf, mo_coeff, 1, casdm1, casdm2, eris, get_g=True)
-        
-        gorb = casscf.pack_uniq_var(g-g.T)
-        Hsqr = numpy.sum(numpy.square(gorb)) / wfn_norm
-        gorbNorm = numpy.linalg.norm(gorb)
-        
-        return Hsqr, gorbNorm
-
-    ssTarget = casscf.fcisolver.spin_square(fcivec[Target], ncas, casscf.nelecas)
-    
-    W_list = []
-    s_list = []
-    for s in xrange(nroots):
-        ss   = casscf.fcisolver.spin_square(fcivec[s], ncas, casscf.nelecas)
-        rdm1 = casscf.fcisolver.make_rdm1(fcivec[s], ncas, casscf.nelecas)
-        rdm2 = casscf.fcisolver.make_rdm2(fcivec[s], ncas, casscf.nelecas)
-        wfn_norm = numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T))
-        rdm1Target = rota_rdms(mo_coeff) 
-        ddmNorm = 1./ncas * numpy.linalg.norm(rdm1 - rdm1Target[ncore:nocc,ncore:nocc])
-        W = numpy.square(omega - e_tot[s]) + eval_Hsqr(s)[0] + ddmNorm
-        print
-        log.info('Root %d : (omega-E)^2 = %.6f Hsqr = %.6f W = %.6f ddmNorm = %.6f S^2 = %.6f',
-                 s, numpy.square(omega - e_tot[s]), eval_Hsqr(s)[0], W, ddmNorm, ss[0])
-        print
-        if abs(ss[0] - ssTarget[0]) < 1e-8:
-            W_list.append(W)
-            s_list.append(s)
-        print "Natural orbital analysis: "
-        nat_orbs = casscf.cas_natorb(mo_coeff, fcivec[s])
-        print
-        print "CI vector"
-        print fcivec[s]
-        print 'wfn_norm = ', wfn_norm
-        print
-        
-    assert(len(W_list) == len(s_list))
-    
-    W_min = W_list[0]
-    for i in xrange(len(W_list)):
-        if abs(W_list[i]) <= abs(W_min):
-            Target = s_list[i]
-            W_min   = W_list[i]
-                
-    return Target
-
-
 # To extend CASSCF for certain CAS space solver, it can be done by assign an
 # object or a module to CASSCF.fcisolver.  The fcisolver object or module
 # should at least have three member functions "kernel" (wfn for given
@@ -752,9 +1009,9 @@ class CASSCF(casci.CASCI):
 # the max orbital rotation and CI increment, prefer small step size
     max_stepsize = getattr(__config__, 'mcscf_mc1step_CASSCF_max_stepsize', .02)
     max_cycle_macro = getattr(__config__, 'mcscf_mc1step_CASSCF_max_cycle_macro', 50)
-    max_cycle_micro = getattr(__config__, 'mcscf_mc1step_CASSCF_max_cycle_micro', 4)
-    conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol', 1e-7)
-    conv_tol_grad = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol_grad', None)
+    max_cycle_micro = getattr(__config__, 'mcscf_mc1step_CASSCF_max_cycle_micro', 1)
+    conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol', 5e-7)
+    conv_tol_grad = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol_grad', 1e-04)
     # for augmented hessian
     ah_level_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_ah_level_shift', 1e-8)
     ah_conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_ah_conv_tol', 1e-12)
@@ -797,6 +1054,21 @@ class CASSCF(casci.CASCI):
     natorb = getattr(__config__, 'mcscf_mc1step_CASSCF_natorb', False)
     canonicalization = getattr(__config__, 'mcscf_mc1step_CASSCF_canonicalization', True)
     sorting_mo_energy = getattr(__config__, 'mcscf_mc1step_CASSCF_sorting_mo_energy', False)
+
+    # Lan's options are below:
+    #for selecting excited state 
+    target_state = getattr(__config__, 'mcscf_mc1step_CASSCF_target_state', 0)
+    target_state_spin  = getattr(__config__, 'mcscf_mc1step_CASSCF_target_state_spin', 0)
+    is_select_state = getattr(__config__, 'mcscf_mc1step_CASSCF_is_select_state', True)
+    #for GMRES and line search
+    is_use_gmres     = getattr(__config__, 'mcscf_mc1step_CASSCF_is_use_gmres', True)
+    gmres_conv_tol   = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_conv_tol', 1e-06)
+    gmres_max_cycle  = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_max_cycle', 100)
+    gmres_hess_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_hess_shift', 1e-06)
+    is_gmres_precond = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_precond', True)
+    is_gmres_conv_dynm = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_conv_dynm', False)
+    is_line_search   = getattr(__config__, 'mcscf_mc1step_CASSCF_is_line_search', True)
+    is_only_ddm      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_ddm', False)
 
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, frozen=None):
         casci.CASCI.__init__(self, mf_or_mol, ncas, nelecas, ncore)
@@ -845,18 +1117,30 @@ class CASSCF(casci.CASCI):
         log.info('max_cycle_micro = %d', self.max_cycle_micro)
         log.info('conv_tol = %g', self.conv_tol)
         log.info('conv_tol_grad = %s', self.conv_tol_grad)
-        log.info('orbital rotation max_stepsize = %g', self.max_stepsize)
-        log.info('augmented hessian ah_max_cycle = %d', self.ah_max_cycle)
-        log.info('augmented hessian ah_conv_tol = %g', self.ah_conv_tol)
-        log.info('augmented hessian ah_linear dependence = %g', self.ah_lindep)
-        log.info('augmented hessian ah_level shift = %d', self.ah_level_shift)
-        log.info('augmented hessian ah_start_tol = %g', self.ah_start_tol)
-        log.info('augmented hessian ah_start_cycle = %d', self.ah_start_cycle)
-        log.info('augmented hessian ah_grad_trust_region = %g', self.ah_grad_trust_region)
-        log.info('kf_trust_region = %g', self.kf_trust_region)
-        log.info('kf_interval = %d', self.kf_interval)
-        log.info('ci_response_space = %d', self.ci_response_space)
-        log.info('ci_grad_trust_region = %d', self.ci_grad_trust_region)
+        if not self.is_use_gmres:
+            log.info('orbital rotation max_stepsize = %g', self.max_stepsize)
+            log.info('augmented hessian ah_max_cycle = %d', self.ah_max_cycle)
+            log.info('augmented hessian ah_conv_tol = %g', self.ah_conv_tol)
+            log.info('augmented hessian ah_linear dependence = %g', self.ah_lindep)
+            log.info('augmented hessian ah_level shift = %d', self.ah_level_shift)
+            log.info('augmented hessian ah_start_tol = %g', self.ah_start_tol)
+            log.info('augmented hessian ah_start_cycle = %d', self.ah_start_cycle)
+            log.info('augmented hessian ah_grad_trust_region = %g', self.ah_grad_trust_region)
+            log.info('kf_trust_region = %g', self.kf_trust_region)
+            log.info('kf_interval = %d', self.kf_interval)
+            log.info('ci_response_space = %d', self.ci_response_space)
+            log.info('ci_grad_trust_region = %d', self.ci_grad_trust_region)
+        else:
+            log.info('is_select_state = %s', self.is_select_state)
+            if self.is_select_state:
+                log.info('is_only_ddm = %s', self.is_only_ddm)
+            log.info('gmres_max_cycle = %d', self.gmres_max_cycle)
+            if not self.is_gmres_conv_dynm:
+                log.info('gmres_conv_tol = %g', self.gmres_conv_tol)
+            log.info('gmres_hess_shift = %g', self.gmres_hess_shift)
+            log.info('is_gmres_precond = %s', self.is_gmres_precond)
+            log.info('is_gmres_conv_dynm = %s', self.is_gmres_conv_dynm)
+            log.info('is_line_search = %s', self.is_line_search)
         log.info('with_dep4 %d', self.with_dep4)
         log.info('natorb = %s', self.natorb)
         log.info('canonicalization = %s', self.canonicalization)
@@ -937,95 +1221,131 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
         #    raise RuntimeError('Multiple roots are detected in fcisolver.  '
         #                       'CASSCF does not know which state to optimize.\n'
         #                       'See also  mcscf.state_average  or  mcscf.state_specific  for excited states.')
+        
+        if isinstance(e_tot, (float, numpy.number)):
+            if envs is not None and log.verbose >= logger.INFO:
+                log.debug('CAS space CI energy = %.15g', e_cas)
 
-        select = bool(int(os.getenv('select'))) # will get from env
-
-        if (numpy.ndim(e_cas) != 0) and (not select or select is None):
-            # This is a workaround for external CI solver compatibility.
-            e_cas  = e_cas[0]
-            fcivec = fcivec[0]
-            e_tot  = e_tot[0]
-
-        if(select): 
-            nroots   = len(e_tot)
-            Target   = int(os.getenv('state'))
-            #ssTarget = int(os.getenv('spin_state'))
-
-        if envs is not None and log.verbose >= logger.INFO:
-            #log.debug('CAS space CI energy = %.15g', e_cas)
-
-            if 'imicro' in envs:  # Within CASSCF iteration
-
-                #Lan works around here
-                if(select):
-                    if envs['imacro'] > 0:
-                        # target the desired state
-                        print
-                        log.info('Selecting the CI vector ...')
-                        
-                        Target = target_state(self, mo_coeff, fcivec, e_tot, envs, Target, nroots, eris)
-
-                        log.info('Targeted root %d', Target)
-                        nat_orbs = self.cas_natorb(mo_coeff, fcivec[Target])
-                        
-                        e_tot = e_tot[Target]
-                        e_cas = e_cas[Target]
-                        fcivec = fcivec[Target]
-
-                if getattr(self.fcisolver, 'spin_square', None):
+                if hasattr(self.fcisolver,'spin_square'):
                     ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
                 else:
                     ss = None
-
-                        
-                if ss is None:
-                    log.info('macro iter %d (%d JK  %d micro), '
-                             'CASSCF E = %.15g  dE = %.8g',
-                             envs['imacro'], envs['njk'], envs['imicro'],
-                             e_tot, e_tot-envs['elast'])
-                else:
-                    log.info('macro iter %d (%d JK  %d micro), '
-                             'CASSCF E = %.15g  dE = %.8g  S^2 = %.7f',
-                             envs['imacro'], envs['njk'], envs['imicro'],
-                             e_tot, e_tot-envs['elast'], ss[0])
-                if 'norm_gci' in envs:
-                    log.info('               |grad[o]|=%5.3g  '
-                             '|grad[c]|= %s  |ddm|=%5.3g',
-                             envs['norm_gorb0'],
-                             envs['norm_gci'], envs['norm_ddm'])
-                else:
-                    log.info('               |grad[o]|=%5.3g  |ddm|=%5.3g',
-                             envs['norm_gorb0'], envs['norm_ddm'])
-            else:  # Initialization step
-                print
-                log.info('CASCI information')
-                for i in xrange(nroots):
-                    ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)
-                    log.info('CASCI state %d  E = %.15g ss = %.7f',
-                             i, e_tot[i], ss[0])
-                print
-                for i in xrange(nroots):
-                    print "Root ", i
+    
+                if 'imicro' in envs:  # Within CASSCF iteration
+                    if ss is None:
+                        log.info('macro iter %d (%d JK  %d micro), '
+                                 'CASSCF E = %.15g  dE = %.8g',
+                                 envs['imacro'], envs['njk'], envs['imicro'],
+                                 e_tot, e_tot-envs['elast'])
+                    else:
+                        log.info('macro iter %d (%d JK  %d micro), '
+                                 'CASSCF E = %.15g  dE = %.8g  S^2 = %.7f',
+                                 envs['imacro'], envs['njk'], envs['imicro'],
+                                 e_tot, e_tot-envs['elast'], ss[0])
+                    if 'norm_gci' in envs:
+                        log.info('               |grad[o]|=%5.3g  '
+                                 '|grad[c]|= %s  |ddm|=%5.3g',
+                                 envs['norm_gorb0'],
+                                 envs['norm_gci'], envs['norm_ddm'])
+                    else:
+                        log.info('               |grad[o]|=%5.3g  |ddm|=%5.3g',
+                                 envs['norm_gorb0'], envs['norm_ddm'])
+                else:  # Initialization step
+                    if ss is None:
+                        log.info('CASCI E = %.15g', e_tot)
+                    else:
+                        log.info('CASCI E = %.15g  S^2 = %.7f', e_tot, ss[0])
+        else:
+            nroots = len(e_tot)
+            if envs is not None and log.verbose >= logger.INFO:
+                #log.debug('CAS space CI energy = %.15g', e_cas)
+                
+                if 'imicro' in envs:  # Within CASSCF iteration
+                    #if self.target_state == 0: # ground state
+                    #    #if (numpy.ndim(e_cas) > 0): 
+                    #    # This is a workaround for external CI solver compatibility.
+                    #    e_cas  = e_cas[0]
+                    #    fcivec = fcivec[0]
+                    #    e_tot  = e_tot[0]
+    
+                    #Lan: select target state
+                    if(self.is_select_state and self.target_state != 0):
+                        if envs['imacro'] > 0:
+                            log.info('CASCI information')
+                            for i in xrange(nroots):
+                                ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)
+                                log.info('CASCI state %d  E = %.15g ss = %.7f',
+                                         i, e_tot[i], ss[0])
+    
+                            # target the desired state
+                            print
+                            log.info('Selecting the CI vector ...')
+                            
+                            target_state = select_target_state(self, mo_coeff, fcivec, e_tot, envs, self.target_state, nroots, eris)
+    
+                            log.info('Targeted root %d', target_state)
+                            nat_orbs = self.cas_natorb(mo_coeff, fcivec[target_state])
+                    else:
+                        target_state = self.target_state
+                                
+                    e_tot = e_tot[target_state]
+                    e_cas = e_cas[target_state]
+                    fcivec = fcivec[target_state]
+    
+                    if getattr(self.fcisolver, 'spin_square', None):
+                        ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
+                    else:
+                        ss = None
+    
+                            
+                    if ss is None:
+                        log.info('macro iter %d (%d JK  %d micro), '
+                                 'CASSCF E = %.15g  dE = %.8g',
+                                 envs['imacro'], envs['njk'], envs['imicro'],
+                                 e_tot, e_tot-envs['elast'])
+                    else:
+                        log.info('macro iter %d (%d JK  %d micro), '
+                                 'CASSCF E = %.15g  dE = %.8g  S^2 = %.7f',
+                                 envs['imacro'], envs['njk'], envs['imicro'],
+                                 e_tot, e_tot-envs['elast'], ss[0])
+                    if 'norm_gci' in envs:
+                        log.info('               |grad[o]|=%5.3g  '
+                                 '|grad[c]|= %s  |ddm|=%5.3g',
+                                 envs['norm_gorb0'],
+                                 envs['norm_gci'], envs['norm_ddm'])
+                    else:
+                        log.info('               |grad[o]|=%5.3g  |ddm|=%5.3g',
+                                 envs['norm_gorb0'], envs['norm_ddm'])
+                else:  # Initialization step
                     print
-                    nat_orbs = self.cas_natorb(mo_coeff, fcivec[i])
+                    log.info('CASCI information')
+                    for i in xrange(nroots):
+                        ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)
+                        log.info('CASCI state %d  E = %.15g ss = %.7f',
+                                 i, e_tot[i], ss[0])
                     print
-                    print "CI vector"
-                    print fcivec[i]
-                print
-                log.info('Initial targeted root %d', Target)
-                print
-                e_tot = e_tot[Target]
-                e_cas = e_cas[Target]
-                fcivec = fcivec[Target]
-                #if getattr(self.fcisolver, 'spin_square', None):
-                #    ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
-                #else:
-                #    ss = None
-                #if ss is None:
-                #    log.info('CASCI E = %.15g', e_tot)
-                #else:
-                #    log.info('CASCI E = %.15g  S^2 = %.7f', e_tot, ss[0])
-                #    
+                    for i in xrange(nroots):
+                        print "Root ", i
+                        print
+                        nat_orbs = self.cas_natorb(mo_coeff, fcivec[i])
+                        print
+                        print "CI vector"
+                        print fcivec[i]
+                    print
+                    log.info('Initial targeted root %d', self.target_state)
+                    print
+                    e_tot = e_tot[self.target_state]
+                    e_cas = e_cas[self.target_state]
+                    fcivec = fcivec[self.target_state]
+                    #if getattr(self.fcisolver, 'spin_square', None):
+                    #    ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
+                    #else:
+                    #    ss = None
+                    #if ss is None:
+                    #    log.info('CASCI E = %.15g', e_tot)
+                    #else:
+                    #    log.info('CASCI E = %.15g  S^2 = %.7f', e_tot, ss[0])
+                    #    
         return e_tot, e_cas, fcivec
 
     as_scanner = as_scanner
@@ -1065,6 +1385,8 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
 
     gen_g_hop = gen_g_hop
     rotate_orb_cc = rotate_orb_cc
+    #genMinRes = genMinRes
+    rotate_orb_gmres = rotate_orb_gmres
 
     def update_ao2mo(self, mo):
         raise DeprecationWarning('update_ao2mo was obseleted since pyscf v1.0.  '

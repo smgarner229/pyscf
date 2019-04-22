@@ -487,14 +487,15 @@ def _make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, nmo):
     dm1[idx,idx] = 2
     dm1[ncore:nocc,ncore:nocc] = casdm1
 
-    dm2 = numpy.zeros((nmo,nmo,nmo,nmo))
-    dm2[ncore:nocc,ncore:nocc,ncore:nocc,ncore:nocc] = casdm2
-    for i in range(ncore):
-        for j in range(ncore):
-            dm2[i,i,j,j] += 4
-            dm2[i,j,j,i] += -2
-        dm2[i,i,ncore:nocc,ncore:nocc] = dm2[ncore:nocc,ncore:nocc,i,i] =2*casdm1
-        dm2[i,ncore:nocc,ncore:nocc,i] = dm2[ncore:nocc,i,i,ncore:nocc] = -casdm1
+
+    dm2 = [] #numpy.zeros((nmo,nmo,nmo,nmo))
+    #dm2[ncore:nocc,ncore:nocc,ncore:nocc,ncore:nocc] = casdm2
+    #for i in range(ncore):
+    #    for j in range(ncore):
+    #        dm2[i,i,j,j] += 4
+    #        dm2[i,j,j,i] += -2
+    #    dm2[i,i,ncore:nocc,ncore:nocc] = dm2[ncore:nocc,ncore:nocc,i,i] =2*casdm1
+    #    dm2[i,ncore:nocc,ncore:nocc,i] = dm2[ncore:nocc,i,i,ncore:nocc] = -casdm1
     return dm1, dm2
 
 # on AO representation
@@ -509,12 +510,12 @@ def make_rdm12(casscf, mo_coeff=None, ci=None):
     casdm1, casdm2 = casscf.fcisolver.make_rdm12(ci, ncas, nelecas)
     rdm1, rdm2 = _make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, nmo)
     rdm1 = reduce(numpy.dot, (mo_coeff, rdm1, mo_coeff.T))
-    rdm2 = numpy.dot(mo_coeff, rdm2.reshape(nmo,-1))
-    rdm2 = numpy.dot(rdm2.reshape(-1,nmo), mo_coeff.T)
-    rdm2 = rdm2.reshape(nmo,nmo,nmo,nmo).transpose(2,3,0,1)
-    rdm2 = numpy.dot(mo_coeff, rdm2.reshape(nmo,-1))
-    rdm2 = numpy.dot(rdm2.reshape(-1,nmo), mo_coeff.T)
-    return rdm1, rdm2.reshape(nmo,nmo,nmo,nmo)
+    #rdm2 = numpy.dot(mo_coeff, rdm2.reshape(nmo,-1))
+    #rdm2 = numpy.dot(rdm2.reshape(-1,nmo), mo_coeff.T)
+    #rdm2 = rdm2.reshape(nmo,nmo,nmo,nmo).transpose(2,3,0,1)
+    #rdm2 = numpy.dot(mo_coeff, rdm2.reshape(nmo,-1))
+    #rdm2 = numpy.dot(rdm2.reshape(-1,nmo), mo_coeff.T)
+    return rdm1 #, rdm2.reshape(nmo,nmo,nmo,nmo)
 
 def get_fock(casscf, mo_coeff=None, ci=None):
     '''Generalized Fock matrix in AO representation
