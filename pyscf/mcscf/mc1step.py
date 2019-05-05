@@ -205,14 +205,19 @@ def gen_g_hop(casscf, mo, u, casdm1, casdm2, eris, get_g=False):
             x2[:ncore,ncore:] += vc
 
         # (pr<->qs)
-        x2 = x2 - x2.T
+        x2 = x2 - x2.T + casscf.gmres_hess_shift * x1
         return casscf.pack_uniq_var(x2)
 
     return g_orb, gorb_update, h_op, h_diag
 
-# BGN ES-CASSCF orbital optimizer
 
-def genMinRes(casscf, bvec, xguess, linear_transform, inner_product=None, precondition=None, thresh=1.0e-6, maxiter=1000):
+
+
+
+# BGN Lan's SS-CASSCF
+
+#GMRES solver
+def genMinRes(casscf, bvec, xguess, linear_transform, inner_product=None, precondition=None, thresh=1.0e-6, maxiter=20):
   """
   Solves the linear system A x = b via the generalized minimal residual method, written by Eric Neuscamman.
 
@@ -315,6 +320,7 @@ def genMinRes(casscf, bvec, xguess, linear_transform, inner_product=None, precon
     # get the new c vector
     c = np.dot( np.transpose(VT), inv_sigma * np.dot( np.transpose(U), rsInternal(bvec) ) )
 
+#line search to minimize gradE w.r.t orb. rotation
 def lineSearch_naive(casscf, dr, fcivec, u, gorb_update):
     log = logger.new_logger(casscf, verbose=None)
     u_new = casscf.update_rotate_matrix(dr, u)
@@ -370,7 +376,6 @@ def lineSearch(casscf, dr, fcivec, u, gorb_update):
 
         return norm_gorb/dalpha 
     
-
     alpha_upper = 0
     alpha_lower = 0
 
@@ -428,6 +433,7 @@ def lineSearch(casscf, dr, fcivec, u, gorb_update):
     
     return u_new, gorb
 
+# orbital optimization using GMRES
 def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_guess=None,
                      conv_tol_grad=1e-4, max_stepsize=None, verbose=None):
 
@@ -445,7 +451,7 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     t3m = log.timer('gen h_op', *t3m)
     
     def precond(x):
-        hdiagd = h_diag - casscf.gmres_hess_shift
+        hdiagd = h_diag #- casscf.gmres_hess_shift
         hdiagd[abs(hdiagd)<1e-8] = 1e-8
         x = x/hdiagd
         norm_x = numpy.linalg.norm(x)
@@ -486,7 +492,7 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     
     return u_new, g_orb
 
-#Lan's routine to target state
+#Target state
 def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nroots, eris):
     log = logger.new_logger(casscf, verbose=None)
     norb  = mo_coeff.shape[1]
@@ -543,11 +549,11 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
             s_list.append(s)
         print "Natural orbital analysis: "
         nat_orbs = casscf.cas_natorb(mo_coeff, fcivec[s])
-        print
-        print "CI vector"
-        print fcivec[s]
-        print 'wfn_norm = ', wfn_norm
-        print
+        #print
+        #print "CI vector"
+        #print fcivec[s]
+        #print 'wfn_norm = ', wfn_norm
+        #print
         
     assert(len(W_list) == len(s_list))
     
@@ -586,7 +592,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
 #not used#        return energy_core + H_1e + 0.5 * H_2e 
 #not used#
 
-# END ES_CASSCF orbital optimizer
+# END Lan's SS-CASSCF
 
 def rotate_orb_cc(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, x0_guess=None,
                   conv_tol_grad=1e-4, max_stepsize=None, verbose=None):
@@ -1064,10 +1070,10 @@ class CASSCF(casci.CASCI):
     is_use_gmres     = getattr(__config__, 'mcscf_mc1step_CASSCF_is_use_gmres', True)
     gmres_conv_tol   = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_conv_tol', 1e-06)
     gmres_max_cycle  = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_max_cycle', 100)
-    gmres_hess_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_hess_shift', 1e-06)
+    gmres_hess_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_hess_shift', 0.)
     is_gmres_precond = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_precond', True)
     is_gmres_conv_dynm = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_conv_dynm', False)
-    is_line_search   = getattr(__config__, 'mcscf_mc1step_CASSCF_is_line_search', True)
+    is_line_search   = getattr(__config__, 'mcscf_mc1step_CASSCF_is_line_search', False)
     is_only_ddm      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_ddm', False)
 
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, frozen=None):

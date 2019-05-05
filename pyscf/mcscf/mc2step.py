@@ -106,13 +106,13 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
             print "new molecular orbitals"
             from pyscf import tools
             tools.dump_mat.dump_mo(casscf.mol, mo, label=casscf.mol.ao_labels(), digits=6)
-            if imacro%5 == 0:
-                fname='mo_iter_'+str(imacro)+'.txt'
-                with open(fname, 'w') as f:
-                    for i in range(mo.shape[0]):
-                        for j in range(mo.shape[1]):
-                            f.write(" %20.10f" % mo[i,j])
-                    f.write("\n")
+            #if imacro%5 == 0:
+            #    fname='mo_iter_'+str(imacro)+'.txt'
+            #    with open(fname, 'w') as f:
+            #        for i in range(mo.shape[0]):
+            #            for j in range(mo.shape[1]):
+            #                f.write(" %20.10f" % mo[i,j])
+            #        f.write("\n")
 
 
         else: # using standard pyscf
@@ -170,13 +170,13 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
             callback(locals())
 
     if conv:
-        fname='mo_conv.txt'
-        with open(fname, 'w') as f:
-            for i in range(mo.shape[0]):
-                for j in range(mo.shape[1]):
-                    f.write(" %20.10f" % mo[i,j])
-            f.write("\n")
-            
+        #fname='mo_conv.txt'
+        #with open(fname, 'w') as f:
+        #    for i in range(mo.shape[0]):
+        #        for j in range(mo.shape[1]):
+        #            f.write(" %20.10f" % mo[i,j])
+        #    f.write("\n")
+        #    
         log.info('2-step CASSCF converged in %d macro (%d JK %d micro) steps',
                  imacro, totinner, totmicro)
     else:
