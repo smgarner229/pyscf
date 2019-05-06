@@ -103,9 +103,9 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
 
                 if norm_gorb < 1e-04: #norm_t < 1e-4 or abs(de) < tol*.4 or 
                     break
-            print "new molecular orbitals"
-            from pyscf import tools
-            tools.dump_mat.dump_mo(casscf.mol, mo, label=casscf.mol.ao_labels(), digits=6)
+            #print "new molecular orbitals"
+            #from pyscf import tools
+            #tools.dump_mat.dump_mo(casscf.mol, mo, label=casscf.mol.ao_labels(), digits=6)
             #if imacro%5 == 0:
             #    fname='mo_iter_'+str(imacro)+'.txt'
             #    with open(fname, 'w') as f:

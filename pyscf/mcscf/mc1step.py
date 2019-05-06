@@ -205,7 +205,9 @@ def gen_g_hop(casscf, mo, u, casdm1, casdm2, eris, get_g=False):
             x2[:ncore,ncore:] += vc
 
         # (pr<->qs)
-        x2 = x2 - x2.T + casscf.gmres_hess_shift * x1
+        x2 = x2 - x2.T
+        if casscf.is_gmres_trust_region:
+            x2 += casscf.gmres_hess_shift * x1
         return casscf.pack_uniq_var(x2)
 
     return g_orb, gorb_update, h_op, h_diag
@@ -451,7 +453,7 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     t3m = log.timer('gen h_op', *t3m)
     
     def precond(x):
-        hdiagd = h_diag #- casscf.gmres_hess_shift
+        hdiagd = h_diag - casscf.gmres_hess_shift
         hdiagd[abs(hdiagd)<1e-8] = 1e-8
         x = x/hdiagd
         norm_x = numpy.linalg.norm(x)
@@ -591,6 +593,10 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
 #not used#        
 #not used#        return energy_core + H_1e + 0.5 * H_2e 
 #not used#
+
+
+
+
 
 # END Lan's SS-CASSCF
 
@@ -1071,6 +1077,7 @@ class CASSCF(casci.CASCI):
     gmres_conv_tol   = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_conv_tol', 1e-06)
     gmres_max_cycle  = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_max_cycle', 100)
     gmres_hess_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_gmres_hess_shift', 0.)
+    is_gmres_trust_region = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_precond', True)
     is_gmres_precond = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_precond', True)
     is_gmres_conv_dynm = getattr(__config__, 'mcscf_mc1step_CASSCF_is_gmres_conv_dynm', False)
     is_line_search   = getattr(__config__, 'mcscf_mc1step_CASSCF_is_line_search', False)
@@ -1145,6 +1152,7 @@ class CASSCF(casci.CASCI):
                 log.info('gmres_conv_tol = %g', self.gmres_conv_tol)
             log.info('gmres_hess_shift = %g', self.gmres_hess_shift)
             log.info('is_gmres_precond = %s', self.is_gmres_precond)
+            log.info('is_gmres_trust_region = %s', self.is_gmres_trust_region)
             log.info('is_gmres_conv_dynm = %s', self.is_gmres_conv_dynm)
             log.info('is_line_search = %s', self.is_line_search)
         log.info('with_dep4 %d', self.with_dep4)
