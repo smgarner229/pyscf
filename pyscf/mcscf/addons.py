@@ -480,22 +480,24 @@ def make_rdm1s(casscf, mo_coeff=None, ci=None, **kwargs):
 def _is_uhf_mo(mo_coeff):
     return not (isinstance(mo_coeff, numpy.ndarray) and mo_coeff.ndim == 2)
 
-def _make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, nmo):
+def _make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, nmo, is_dm2=False):
     nocc = ncas + ncore
     dm1 = numpy.zeros((nmo,nmo))
     idx = numpy.arange(ncore)
     dm1[idx,idx] = 2
     dm1[ncore:nocc,ncore:nocc] = casdm1
 
-
-    dm2 = [] #numpy.zeros((nmo,nmo,nmo,nmo))
-    #dm2[ncore:nocc,ncore:nocc,ncore:nocc,ncore:nocc] = casdm2
-    #for i in range(ncore):
-    #    for j in range(ncore):
-    #        dm2[i,i,j,j] += 4
-    #        dm2[i,j,j,i] += -2
-    #    dm2[i,i,ncore:nocc,ncore:nocc] = dm2[ncore:nocc,ncore:nocc,i,i] =2*casdm1
-    #    dm2[i,ncore:nocc,ncore:nocc,i] = dm2[ncore:nocc,i,i,ncore:nocc] = -casdm1
+    if is_dm2:
+        dm2 = numpy.zeros((nmo,nmo,nmo,nmo))
+        dm2[ncore:nocc,ncore:nocc,ncore:nocc,ncore:nocc] = casdm2
+        for i in range(ncore):
+            for j in range(ncore):
+                dm2[i,i,j,j] += 4
+                dm2[i,j,j,i] += -2
+            dm2[i,i,ncore:nocc,ncore:nocc] = dm2[ncore:nocc,ncore:nocc,i,i] =2*casdm1
+            dm2[i,ncore:nocc,ncore:nocc,i] = dm2[ncore:nocc,i,i,ncore:nocc] = -casdm1
+    else:
+        dm2 = []
     return dm1, dm2
 
 # on AO representation

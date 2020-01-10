@@ -23,13 +23,13 @@ import os
 from functools import reduce
 import numpy
 import scipy.linalg
-from pyscf import lib
+from pyscf import lib, tools
 from pyscf.lib import logger
 from pyscf.mcscf import casci, addons
 from pyscf.mcscf.casci import get_fock, cas_natorb, canonicalize
 from pyscf.mcscf import mc_ao2mo
 from pyscf.mcscf import chkfile
-from pyscf import ao2mo
+from pyscf import ao2mo, scf
 from pyscf import gto
 from pyscf import fci
 from pyscf.soscf import ciah
@@ -451,7 +451,9 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     norm_gorb = numpy.linalg.norm(g_orb)
     log.debug(' before gmres  |g|=%5.3g', norm_gorb)
     t3m = log.timer('gen h_op', *t3m)
-    
+
+    if imacro > 2:
+        casscf.gmres_hess_shift = 0.1
     def precond(x):
         hdiagd = h_diag - casscf.gmres_hess_shift
         hdiagd[abs(hdiagd)<1e-8] = 1e-8
@@ -474,7 +476,8 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     if casscf.is_gmres_conv_dynm:
         tol = 0.25*norm_gorb
         log.info('genMinRes tol is dynamically changed: %5.3g', tol ) 
-        
+    #if imacro > 2:
+    #    casscf.gmres_max_cycle = 2
     if casscf.is_gmres_precond:
         dr = genMinRes(casscf, bvec, x0_guess, h_op, thresh=tol, maxiter=casscf.gmres_max_cycle, precondition=precond)
     else:
@@ -495,6 +498,13 @@ def rotate_orb_gmres(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, imacro, x0_gues
     return u_new, g_orb
 
 #Target state
+def rota_rdms(mo_coeff, rdm1_AO):
+    from numpy.linalg import pinv
+    mo_coeff_inv = pinv(mo_coeff)
+    rdm1_MO = reduce(numpy.dot, (mo_coeff_inv, rdm1_AO, mo_coeff_inv.T))
+    
+    return rdm1_MO
+
 def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nroots, eris):
     log = logger.new_logger(casscf, verbose=None)
     norb  = mo_coeff.shape[1]
@@ -504,16 +514,9 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
     omega = envs['omega']
     rdm1Target_AO = envs['rdm1Target_AO'] # in AOs
     #rdm2Target_AO = envs['rdm2Target_AO'] # in AOs 
-    casdm1Target  = envs['casdm1Target'] # in MOs
-    casdm2Target  = envs['casdm2Target'] # in MOs 
+    #casdm1Target  = envs['casdm1Target'] # in MOs
+    #casdm2Target  = envs['casdm2Target'] # in MOs 
 
-    def rota_rdms(mo_coeff):
-        from numpy.linalg import inv
-        mo_coeff_inv = inv(mo_coeff)
-	rdm1Target = reduce(numpy.dot, (mo_coeff_inv, rdm1Target_AO, mo_coeff_inv.T))
-
-        return rdm1Target
-    
     def eval_Hsqr(s):
         wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T)))
         casdm1 = casscf.fcisolver.make_rdm1(fcivec[s], ncas, casscf.nelecas)
@@ -525,7 +528,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         
         return Hsqr, gorbNorm
 
-    rdm1Target = rota_rdms(mo_coeff)
+    rdm1Target = rota_rdms(mo_coeff, rdm1Target_AO)
 
     W_list = []
     s_list = []
@@ -545,6 +548,10 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         print
         log.info('Root %d : (omega-E)^2 = %.6f Hsqr = %.6f W = %.6f ddmNorm = %.6f S^2 = %.6f',
                  s, numpy.square(omega - e_tot[s]), eval_Hsqr(s)[0], W, ddmNorm, ss[0])
+        
+        rdm1_AO = addons.make_rdm1(casscf, mo_coeff, fcivec[s])
+        d = scf.hf.dip_moment(mol=casscf.mol, dm=rdm1_AO)
+
         print
         if abs(ss[0] - casscf.target_state_spin) < 1e-2:
             W_list.append(W)
@@ -594,8 +601,146 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
 #not used#        return energy_core + H_1e + 0.5 * H_2e 
 #not used#
 
+def eval_energy(mol, h1e_ao, enuc, mo_coeff, ncas, casdm1, casdm2): # objective function
+    #mo_coeff = casscf.mo_coeff
+    #energy_core  = mol.energy_nuc()
+    #h1e_ao  = casscf.get_hcore()
+    #if(ncore > 0):
+    #    mo_core = mo_coeff[:,:ncore]
+    #    core_dm = numpy.dot(mo_core, mo_core.T) * 2
+    #    energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_hcore())
+    #    energy_core += numpy.einsum('ij,ji', core_dm, casscf.get_veff(casscf.mol)) * .5
+    #    h1e_ao      += casscf.get_veff(casscf.mol, core_dm)
+
+    ncore = 0
+    nocc = ncas
+    h1e = reduce(numpy.dot, (mo_coeff[:,ncore:nocc].T, h1e_ao, mo_coeff[:,ncore:nocc]))
+    eri = ao2mo.kernel(mol, mo_coeff[:,ncore:nocc], compact=False)
+    eri = numpy.reshape(eri, (ncas, ncas, ncas, ncas))
+    
+    #rdm1, rdm2 = make_rdm12(casscf, s)
+    #casdm1 = casscf.fcisolver.make_rdm1(fcivec(), ncas, casscf.nelecas)
+    #casdm2 = casscf.fcisolver.make_rdm2(fcivec(), ncas, casscf.nelecas)
+    H_1e = numpy.einsum('ik,ik->',     casdm1, h1e)  #[:ncas,:ncas]
+    H_2e = numpy.einsum('ijkl,ijkl->', casdm2, eri) # 2. W_2e [:ncas,:ncas,:ncas,:ncas]
+    print "H_1e", H_1e, H_2e
+    return enuc + H_1e + 0.5 * H_2e 
 
 
+
+
+def genMOandCI(mc, mol, civec=None, mo_coeff=None):
+
+    if mo_coeff is None:
+        mo_coeff = mc.mo_coeff
+    if civec is None:
+        civec    = mc.ci
+    ncas     = mc.ncas
+    neleca, nelecb = mc.nelecas
+    #mol = mc.mol
+    nmo = mo_coeff.shape[1]
+    ncore = mc.ncore
+    nvir = nmo - ncore - ncas
+    nocc = ncore+ncas
+
+
+    #normalize civec
+    wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(civec, civec.T)))
+    civec = civec/wfn_norm
+
+    print '||civec|| = ', numpy.sqrt(numpy.sum(numpy.matmul(civec, civec.T)))
+    
+    print ""
+    print "NEW MO COEFFICIENTS"
+    print ""
+    print ""
+    print ""
+    
+    tools.dump_mat.dump_mo(mol,  mo_coeff, label=mol.ao_labels(), ncol=5, digits=6)
+
+    def gen_string():
+        # for alpha
+        a = [bin(x) for x in fci.cistring.make_strings(range(ncas),neleca)]        
+        stringa = []
+        for k in xrange(len(a)):
+            b = list(a[k])[len(list(a[k]))-1]
+            for i in range(0,len(list(a[k]))-1):
+                j = len(list(a[k]))-2-i
+                if j > 1:
+                    b += list(a[k])[j]
+            if len(list(b)) < ncas:
+                for i in xrange(ncas-len(list(b))):
+                    b += '0'
+        
+            #print b
+            c = ''
+            for i in xrange(ncore):
+                c += '1'
+            d = ''
+            for i in xrange(nvir):
+                d += '0'
+            stringa.append(c+b)
+
+        # for beta
+        a = [bin(x) for x in fci.cistring.make_strings(range(ncas),nelecb)]        
+        stringb = []
+        for k in xrange(len(a)):
+            b = list(a[k])[len(list(a[k]))-1]
+            for i in range(0,len(list(a[k]))-1):
+                j = len(list(a[k]))-2-i
+                if j > 1:
+                    b += list(a[k])[j]
+            if len(list(b)) < ncas:
+                for i in xrange(ncas-len(list(b))):
+                    b += '0'
+        
+            #print b
+            c = ''
+            for i in xrange(ncore):
+                c += '1'
+            d = ''
+            for i in xrange(nvir):
+                d += '0'
+            stringb.append(c+b)
+
+        combo = []
+        for i in xrange(len(stringb)):
+            for j in xrange(len(stringa)):
+                combo.append([stringa[j], stringb[i], civec[i,j]])
+
+        #for i in xrange(len(combo)):
+        #    print combo[i][0], combo[i][1], combo[i][2]
+
+        #print(fci.cistring.gen_linkstr_index(range(4),2))
+        return combo
+    
+    string = gen_string()
+
+    print
+    print
+    print " ALPHA   |  BETA    | COEFFICIENT"
+    for i in xrange(nocc):
+        sys.stdout.write("-")
+    print "-|-",
+    for i in xrange(nocc):
+        sys.stdout.write("-")
+        #print "-",
+    print "-|-",
+    for i in xrange(20):
+        sys.stdout.write("-")
+        #print "-",
+    print
+    #print "   ", stringa
+    #print "   ", stringb
+    for i in xrange(len(string)):
+            if abs(string[i][2]) > 1e-08:
+                sys.stdout.write(str(string[i][0]))
+                print " | ",
+                sys.stdout.write(str(string[i][1]))
+                print " | ",
+                sys.stdout.write(str(string[i][2]))
+                print
+    print "..... DONE WITH GENERAL CI COMPUTATION ..... "
 
 
 # END Lan's SS-CASSCF
@@ -727,7 +872,7 @@ def rotate_orb_cc(casscf, mo, fcivec, fcasdm1, fcasdm2, eris, x0_guess=None,
     yield u, g_kf, ihop+jkcount, dxi
 
 
-def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
+def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=1e-03,
            ci0=None, callback=None, verbose=logger.NOTE, dump_chk=True):
     '''quasi-newton CASSCF optimization driver
     '''
@@ -870,7 +1015,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     return conv, e_tot, e_cas, fcivec, mo, mo_energy
 
 
-def as_scanner(mc):
+def as_scanner(mc, envs=None):
     '''Generating a scanner for CASSCF PES.
 
     The returned solver is a function. This function requires one argument
@@ -907,6 +1052,8 @@ def as_scanner(mc):
             else:
                 mol = self.mol.set_geom_(mol_or_geom, inplace=False)
 
+            #print "we are here 222"
+
             mf_scanner = self._scf
             mf_scanner(mol)
             self.mol = mol
@@ -914,8 +1061,27 @@ def as_scanner(mc):
                 mo = mf_scanner.mo_coeff
             else:
                 mo = self.mo_coeff
+
+            #print "test ", int(os.environ["cycle"])+1
+            #print "mf_scanner.mo_coeff"
+            #print mf_scanner.mo_coeff
+            #print
+            #print self.mo_coeff
+
+            print "inital molecular orbitals for CASSCF"
+            tools.dump_mat.dump_mo(mol, mo, label=mol.ao_labels(), ncol=5, digits=6) 
+            
             mo = project_init_guess(self, mo)
-            e_tot = self.kernel(mo, self.ci)[0]
+            #print "envs[cycle]", envs['cycle']
+            #Lan: optimizing excited state
+            if(self.is_select_state):
+                print "We are optimizing an excited state"
+                e_tot = self.mc2step(mo, self.ci)[0]
+                #print "geomopt cycle = ", os.environ["cycle"]
+                #print "new mo"
+                #print self.mo_coeff
+            else:
+                e_tot = self.kernel(mo, self.ci)[0]
             return e_tot
     return CASSCF_Scanner(mc)
 
@@ -1022,8 +1188,8 @@ class CASSCF(casci.CASCI):
     max_stepsize = getattr(__config__, 'mcscf_mc1step_CASSCF_max_stepsize', .02)
     max_cycle_macro = getattr(__config__, 'mcscf_mc1step_CASSCF_max_cycle_macro', 50)
     max_cycle_micro = getattr(__config__, 'mcscf_mc1step_CASSCF_max_cycle_micro', 1)
-    conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol', 5e-7)
-    conv_tol_grad = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol_grad', 1e-04)
+    conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol', 5e-6)
+    conv_tol_grad = getattr(__config__, 'mcscf_mc1step_CASSCF_conv_tol_grad', 5e-04)
     # for augmented hessian
     ah_level_shift = getattr(__config__, 'mcscf_mc1step_CASSCF_ah_level_shift', 1e-8)
     ah_conv_tol = getattr(__config__, 'mcscf_mc1step_CASSCF_ah_conv_tol', 1e-12)
@@ -1283,7 +1449,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     #    e_tot  = e_tot[0]
     
                     #Lan: select target state
-                    if(self.is_select_state and self.target_state != 0):
+                    if(self.is_select_state):
                         if envs['imacro'] > 0:
                             log.info('CASCI information')
                             for i in xrange(nroots):
@@ -1331,6 +1497,10 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                         log.info('               |grad[o]|=%5.3g  |ddm|=%5.3g',
                                  envs['norm_gorb0'], envs['norm_ddm'])
                 else:  # Initialization step
+                    geom_cycle = 0
+                    if os.environ.get("cycle") is not None:
+                        geom_cycle = int(os.environ["cycle"])+1
+                        #print "geomopt cycle = ", geom_cycle
                     print
                     log.info('CASCI information')
                     for i in xrange(nroots):
@@ -1340,11 +1510,36 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     print
                     for i in xrange(nroots):
                         print "Root ", i
+                        rdm1_AO = addons.make_rdm1(self, mo_coeff, fcivec[i])
+                        d = scf.hf.dip_moment(mol=self.mol, dm=rdm1_AO)
                         print
                         nat_orbs = self.cas_natorb(mo_coeff, fcivec[i])
                         print
                         print "CI vector"
                         print fcivec[i]
+                    #select target state for new geometry opt cycle
+                    if geom_cycle > 1:
+                        print "Selecting target state for new geometry opt cycle"
+                        nmo = mo_coeff.shape[1]
+                        rdm1_prevgeom_AO = envs['rdm1_pregeom_AO']
+                        rdm1_prevgeom_MO = rota_rdms(mo_coeff, rdm1_prevgeom_AO) #rotate rdm1 to new MOs
+                        self.target_state = 0
+                        for s in xrange(nroots):
+                            casdm1 = self.fcisolver.make_rdm1(fcivec[s], self.ncas, self.nelecas)
+                            casdm2 = self.fcisolver.make_rdm2(fcivec[s], self.ncas, self.nelecas)
+                            rdm1_MO, rdm2_MO = addons._make_rdm12_on_mo(casdm1, casdm2, self.ncore, self.ncas, nmo)
+                            ddmNorm = 1./self.ncas * numpy.linalg.norm(rdm1_MO - rdm1_prevgeom_MO)
+                            print "state ", s, "ddmNorm = ", abs(ddmNorm)
+                            #print rdm1_MO
+                            #print
+                            #ddmNorm_min = 0.
+                            if s == 0:
+                                ddmNorm_min = abs(ddmNorm)
+                            else:
+                                if abs(ddmNorm) < ddmNorm_min:
+                                    self.target_state = s
+                                    ddmNorm_min = abs(ddmNorm)
+                                    print "ddmNorm ", ddmNorm, ddmNorm_min
                     print
                     log.info('Initial targeted root %d', self.target_state)
                     print
@@ -1352,7 +1547,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     e_cas = e_cas[self.target_state]
                     fcivec = fcivec[self.target_state]
                     #if getattr(self.fcisolver, 'spin_square', None):
-                    #    ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
+                    #    ss = self.fcisolver.spin_square(fcivec, self .ncas, self.nelecas)
                     #else:
                     #    ss = None
                     #if ss is None:
