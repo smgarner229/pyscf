@@ -42,6 +42,7 @@ def init_guess_by_atom(mol):
     dm = hf.init_guess_by_atom(mol)
     return numpy.array((dm*.5, dm*.5))
 
+init_guess_by_huckel = uhf.init_guess_by_huckel
 init_guess_by_chkfile = uhf.init_guess_by_chkfile
 
 def get_fock(mf, h1e=None, s1e=None, vhf=None, dm=None, cycle=-1, diis=None,
@@ -145,7 +146,7 @@ def get_occ(mf, mo_energy=None, mo_coeff=None):
         nelec = mf.nelec
     ncore = nelec[1]
     nocc  = nelec[0]
-    nopen = nocc - ncore
+    nopen = abs(nocc - ncore)
     mo_occ = _fill_rohf_occ(mo_energy, mo_ea, mo_eb, ncore, nopen)
 
     if mf.verbose >= logger.INFO and nocc < nmo and ncore > 0:
@@ -211,8 +212,8 @@ def get_grad(mo_coeff, mo_occ, fock):
         focka, fockb = fock
     else:
         focka = fockb = fock
-    focka = reduce(numpy.dot, (mo_coeff.T.conj(), focka, mo_coeff))
-    fockb = reduce(numpy.dot, (mo_coeff.T.conj(), fockb, mo_coeff))
+    focka = reduce(numpy.dot, (mo_coeff.conj().T, focka, mo_coeff))
+    fockb = reduce(numpy.dot, (mo_coeff.conj().T, fockb, mo_coeff))
 
     g = numpy.zeros_like(focka)
     g[uniq_var_a]  = focka[uniq_var_a]
@@ -248,6 +249,8 @@ def analyze(mf, verbose=logger.DEBUG, with_meta_lowdin=WITH_META_LOWDIN,
     mo_coeff = mf.mo_coeff
     log = logger.new_logger(mf, verbose)
     if log.verbose >= logger.NOTE:
+        mf.dump_scf_summary(log)
+
         log.note('**** MO energy ****')
         if getattr(mo_energy, 'mo_ea', None) is not None:
             mo_ea = mo_energy.mo_ea
@@ -267,7 +270,7 @@ def analyze(mf, verbose=logger.DEBUG, with_meta_lowdin=WITH_META_LOWDIN,
         if with_meta_lowdin:
             log.debug(' ** MO coefficients (expansion on meta-Lowdin AOs) **')
             orth_coeff = orth.orth_ao(mf.mol, 'meta_lowdin', s=ovlp_ao)
-            c = reduce(numpy.dot, (orth_coeff.T, ovlp_ao, mo_coeff))
+            c = reduce(numpy.dot, (orth_coeff.conj().T, ovlp_ao, mo_coeff))
         else:
             log.debug(' ** MO coefficients (expansion on AOs) **')
             c = mo_coeff
@@ -332,8 +335,8 @@ class ROHF(hf.RHF):
 
     check_sanity = hf.SCF.check_sanity
 
-    def dump_flags(self):
-        hf.SCF.dump_flags(self)
+    def dump_flags(self, verbose=None):
+        hf.SCF.dump_flags(self, verbose)
         nelec = self.nelec
         logger.info(self, 'num. doubly occ = %d  num. singly occ = %d',
                     nelec[1], nelec[0]-nelec[1])
@@ -346,6 +349,11 @@ class ROHF(hf.RHF):
         if mol is None: mol = self.mol
         logger.info(self, 'Initial guess from the superpostion of atomic densties.')
         return init_guess_by_atom(mol)
+
+    def init_guess_by_huckel(self, mol=None):
+        if mol is None: mol = self.mol
+        logger.info(self, 'Initial guess from on-the-fly Huckel, doi:10.1021/acs.jctc.8b01089.')
+        return init_guess_by_huckel(mol)
 
     def init_guess_by_1e(self, mol=None):
         if mol is None: mol = self.mol

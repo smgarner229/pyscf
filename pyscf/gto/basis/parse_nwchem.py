@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2019 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ MAPSPDF = {'S': 0,
            'M': 9,
           }
 
-BASIS_SET_DELIMITER = re.compile('# *BASIS SET.*\n')
+BASIS_SET_DELIMITER = re.compile('# *BASIS SET.*\n|END\n')
 ECP_DELIMITER = re.compile('\n *ECP *\n')
 
 def parse(string, symb=None, optimize=True):
@@ -141,7 +141,7 @@ def search_seg(basisfile, symb):
         return [x.upper() for x in dat.splitlines() if x and 'END' not in x]
 
 def _search_seg(raw_data, symb):
-    for dat in raw_data[1:]:
+    for dat in raw_data:
         dat0 = dat.split(None, 1)
         if dat0 and dat0[0] == symb:
             return dat
@@ -321,9 +321,13 @@ def to_general_contraction(basis):
         es = numpy.hstack([ec[:,0] for ec in basdic[key]])
         cs = scipy.linalg.block_diag(*[ec[:,1:] for ec in basdic[key]])
 
-        idx = numpy.unique(es.round(9), return_index=True)[1]
-        idx = idx[::-1]  # sort the exponents from large to small
-        ec = numpy.hstack((es[idx,None], cs[idx,:]))
+        es, e_idx, rev_idx = numpy.unique(es.round(9), True, True)
+        es = es[::-1]  # sort the exponents from large to small
+        bcoeff = numpy.zeros((e_idx.size, cs.shape[1]))
+        for i, j in enumerate(rev_idx):
+            bcoeff[j] += cs[i]
+        bcoeff = bcoeff[::-1]
+        ec = numpy.hstack((es[:,None], bcoeff))
 
         basis.append(l_kappa + ec.tolist())
 

@@ -37,12 +37,13 @@ from pyscf.pbc.df import outcore
 from pyscf.pbc.df import ft_ao
 from pyscf.pbc.df import df
 from pyscf.pbc.df import aft
-from pyscf.pbc.df.df import fuse_auxcell
+from pyscf.pbc.df.df import fuse_auxcell, _round_off_to_odd_mesh
 from pyscf.pbc.df.df_jk import zdotNN, zdotCN, zdotNC
 from pyscf.pbc.lib.kpts_helper import (is_zero, gamma_point, member, unique,
                                        KPT_DIFF_TOL)
 from pyscf.pbc.df import mdf_jk
 from pyscf.pbc.df import mdf_ao2mo
+from pyscf.pbc.df.aft import _sub_df_jk_
 from pyscf import __config__
 
 
@@ -127,7 +128,7 @@ def _make_j3c(mydf, cell, auxcell, kptij_lst, cderi_file):
         j2ctag = 'eig'
         return j2c, j2c_negative, j2ctag
 
-    feri = h5py.File(cderi_file)
+    feri = h5py.File(cderi_file, 'a')
     feri['j3c-kptij'] = kptij_lst
     nsegs = len(fswap['j3c-junk/0'])
     def make_kpt(uniq_kptji_id, cholesky_j2c):  # kpt = kptj - kpti
@@ -312,7 +313,7 @@ def _mesh_for_valence(cell, valence_exp=VALENCE_EXP):
     mesh = numpy.min((mesh, cell.mesh), axis=0)
     if cell.dimension < 2 or cell.low_dim_ft_type == 'inf_vacuum':
         mesh[cell.dimension:] = cell.mesh[cell.dimension:]
-    return mesh
+    return _round_off_to_odd_mesh(mesh)
 del(VALENCE_EXP)
 
 
@@ -353,6 +354,7 @@ class MDF(df.DF):
         self._cderi_to_save = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
 # If _cderi is specified, the 3C-integral tensor will be read from this file
         self._cderi = None
+        self._rsh_df = {}  # Range separated Coulomb DF objects
         self._keys = set(self.__dict__.keys())
 
     @property
@@ -388,7 +390,11 @@ class MDF(df.DF):
     # core DM in CASCI). An SCF level exxdiv treatment is inadequate for
     # post-HF methods.
     def get_jk(self, dm, hermi=1, kpts=None, kpts_band=None,
-               with_j=True, with_k=True, exxdiv=None):
+               with_j=True, with_k=True, omega=None, exxdiv=None):
+        if omega is not None:  # J/K for RSH functionals
+            return _sub_df_jk_(self, dm, hermi, kpts, kpts_band,
+                               with_j, with_k, omega, exxdiv)
+
         if kpts is None:
             if numpy.all(self.kpts == 0):
                 # Gamma-point calculation by default

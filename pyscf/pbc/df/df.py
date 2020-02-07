@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2019 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@ from pyscf.pbc.df.aft import estimate_eta, get_nuc
 from pyscf.pbc.df.df_jk import zdotCN, zdotNN, zdotNC
 from pyscf.pbc.lib.kpts_helper import (is_zero, gamma_point, member, unique,
                                        KPT_DIFF_TOL)
+from pyscf.pbc.df.aft import _sub_df_jk_
 from pyscf import __config__
 
 LINEAR_DEP_THR = getattr(__config__, 'pbc_df_df_DF_lindep', 1e-9)
@@ -217,7 +218,7 @@ def _make_j3c(mydf, cell, auxcell, kptij_lst, cderi_file):
             #      'It is likely that mesh is not enough.\n'
             #      '===================================')
             #log.error(msg)
-            #raise scipy.linalg.LinAlgError('\n'.join([e.message, msg]))
+            #raise scipy.linalg.LinAlgError('\n'.join([str(e), msg]))
             w, v = scipy.linalg.eigh(j2c)
             log.debug('DF metric linear dependency for kpt %s', uniq_kptji_id)
             log.debug('cond = %.4g, drop %d bfns',
@@ -429,11 +430,6 @@ class GDF(aft.AFTDF):
             eta_guess = estimate_eta(cell, cell.precision)
             if eta_cell < eta_guess:
                 self.eta = eta_cell
-                # TODO? Round off mesh to the nearest odd numbers.
-                # Odd number of grids is preferred because even number of
-                # grids may break the conjugation symmetry between the
-                # k-points k and -k.
-                #?self.mesh = [(n//2)*2+1 for n in cell.mesh]
                 self.mesh = cell.mesh
             else:
                 self.eta = eta_guess
@@ -441,6 +437,7 @@ class GDF(aft.AFTDF):
                 self.mesh = tools.cutoff_to_mesh(cell.lattice_vectors(), ke_cutoff)
                 if cell.dimension < 2 or cell.low_dim_ft_type == 'inf_vacuum':
                     self.mesh[cell.dimension:] = cell.mesh[cell.dimension:]
+        self.mesh = _round_off_to_odd_mesh(self.mesh)
 
         # exp_to_discard to remove diffused fitting functions. The diffused
         # fitting functions may cause linear dependency in DF metric. Removing
@@ -461,6 +458,7 @@ class GDF(aft.AFTDF):
         self._cderi_to_save = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
 # If _cderi is specified, the 3C-integral tensor will be read from this file
         self._cderi = None
+        self._rsh_df = {}  # Range separated Coulomb DF objects
         self._keys = set(self.__dict__.keys())
 
     @property
@@ -473,6 +471,15 @@ class GDF(aft.AFTDF):
             self.auxcell = None
             self._cderi = None
 
+    def reset(self, cell=None):
+        if cell is not None:
+            self.cell = cell
+        self.auxcell = None
+        self._cderi = None
+        self._cderi_to_save = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        self._rsh_df = {}
+        return self
+
     @property
     def gs(self):
         return [n//2 for n in self.mesh]
@@ -482,8 +489,8 @@ class GDF(aft.AFTDF):
                       'mesh = the number of PWs (=2*gs+1) for each direction.')
         self.mesh = [2*n+1 for n in x]
 
-    def dump_flags(self, log=None):
-        log = logger.new_logger(self, log)
+    def dump_flags(self, verbose=None):
+        log = logger.new_logger(self, verbose)
         log.info('\n')
         log.info('******** %s ********', self.__class__)
         log.info('mesh = %s (%d PWs)', self.mesh, numpy.prod(self.mesh))
@@ -634,8 +641,6 @@ class GDF(aft.AFTDF):
             blksize = max(16, min(int(blksize), self.blockdim))
             logger.debug3(self, 'max_memory %d MB, blksize %d', max_memory, blksize)
 
-        if unpack:
-            buf = numpy.empty((blksize,nao*(nao+1)//2))
         def load(Lpq, b0, b1, bufR, bufI):
             Lpq = numpy.asarray(Lpq[b0:b1])
             if is_real:
@@ -662,6 +667,8 @@ class GDF(aft.AFTDF):
         LpqR = LpqI = None
         with _load3c(self._cderi, 'j3c', kpti_kptj, 'j3c-kptij') as j3c:
             naux = j3c.shape[0]
+            if unpack:
+                buf = numpy.empty((min(blksize, naux), nao * (nao + 1) // 2))
             for b0, b1 in lib.prange(0, naux, blksize):
                 LpqR, LpqI = load(j3c, b0, b1, LpqR, LpqI)
                 yield LpqR, LpqI, 1
@@ -673,6 +680,8 @@ class GDF(aft.AFTDF):
             with _load3c(self._cderi, 'j3c-', kpti_kptj, 'j3c-kptij',
                          ignore_key_error=True) as j3c:
                 naux = j3c.shape[0]
+                if unpack:
+                    buf = numpy.empty((min(blksize, naux), nao * (nao + 1) // 2))
                 for b0, b1 in lib.prange(0, naux, blksize):
                     LpqR, LpqI = load(j3c, b0, b1, LpqR, LpqI)
                     yield LpqR, LpqI, -1
@@ -688,7 +697,11 @@ class GDF(aft.AFTDF):
     # core DM in CASCI). An SCF level exxdiv treatment is inadequate for
     # post-HF methods.
     def get_jk(self, dm, hermi=1, kpts=None, kpts_band=None,
-               with_j=True, with_k=True, exxdiv=None):
+               with_j=True, with_k=True, omega=None, exxdiv=None):
+        if omega is not None:  # J/K for RSH functionals
+            return _sub_df_jk_(self, dm, hermi, kpts, kpts_band,
+                               with_j, with_k, omega, exxdiv)
+
         if kpts is None:
             if numpy.all(self.kpts == 0):
                 # Gamma-point calculation by default
@@ -946,4 +959,14 @@ class _load_and_unpack(object):
 def _gaussian_int(cell):
     r'''Regular gaussian integral \int g(r) dr^3'''
     return ft_ao.ft_ao(cell, numpy.zeros((1,3)))[0].real
+
+def _round_off_to_odd_mesh(mesh):
+    # Round off mesh to the nearest odd numbers.
+    # Odd number of grids is preferred because even number of grids may break
+    # the conjugation symmetry between the k-points k and -k.
+    # When building the DF integral tensor in function _make_j3c, the symmetry
+    # between k and -k is used (function conj_j2c) to overcome the error
+    # caused by auxiliary basis linear dependency. More detalis of this
+    # problem can be found in function _make_j3c.
+    return [(i//2)*2+1 for i in mesh]
 

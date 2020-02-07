@@ -32,6 +32,13 @@ import types
 import ctypes
 import numpy
 import h5py
+from threading import Thread
+from multiprocessing import Queue, Process
+try:
+    from concurrent.futures import ThreadPoolExecutor
+except ImportError:
+    ThreadPoolExecutor = None
+
 from pyscf.lib import param
 from pyscf import __config__
 
@@ -39,6 +46,8 @@ if h5py.version.version[:4] == '2.2.':
     sys.stderr.write('h5py-%s is found in your environment. '
                      'h5py-%s has bug in threading mode.\n'
                      'Async-IO is disabled.\n' % ((h5py.version.version,)*2))
+if h5py.version.version[:2] == '3.':
+    h5py.get_config().default_file_mode = 'a'
 
 c_double_p = ctypes.POINTER(ctypes.c_double)
 c_int_p = ctypes.POINTER(ctypes.c_int)
@@ -346,7 +355,7 @@ class capture_stdout(object):
 
     >>> import os
     >>> from pyscf import lib
-    >>> with lib.capture_stdout as out:
+    >>> with lib.capture_stdout() as out:
     ...     os.system('ls')
     >>> print(out.read())
     '''
@@ -410,6 +419,7 @@ class omnimethod(object):
         return functools.partial(self.func, instance)
 
 
+SANITY_CHECK = getattr(__config__, 'SANITY_CHECK', True)
 class StreamObject(object):
     '''For most methods, there are three stream functions to pipe computing stream:
 
@@ -472,12 +482,15 @@ class StreamObject(object):
         self.kernel(*args)
         return self
 
-    def set(self, **kwargs):
+    def set(self, *args, **kwargs):
         '''
         Update the attributes of the current object.  The return value of
         method set is the object itself.  This allows a series of
         functions/methods to be executed in pipe.
         '''
+        if args:
+            warnings.warn('method set() only supports keyword arguments.\n'
+                          'Arguments %s are ignored.' % args)
         #if getattr(self, '_keys', None):
         #    for k,v in kwargs.items():
         #        setattr(self, k, v)
@@ -488,6 +501,9 @@ class StreamObject(object):
         for k,v in kwargs.items():
             setattr(self, k, v)
         return self
+
+    # An alias to .set method
+    __call__ = set
 
     def apply(self, fn, *args, **kwargs):
         '''
@@ -509,7 +525,8 @@ class StreamObject(object):
         return value of method set is the object itself.  This allows a series
         of functions/methods to be executed in pipe.
         '''
-        if (self.verbose > 0 and  # logger.QUIET
+        if (SANITY_CHECK and
+            self.verbose > 0 and  # logger.QUIET
             getattr(self, '_keys', None)):
             check_sanity(self, self._keys, self.stdout)
         return self
@@ -579,13 +596,14 @@ def alias(fn, alias_name=None):
     overloaded in the child class. Using "alias" can make sure that the
     overloaded mehods were called when calling the aliased method.
     '''
-    def aliased_fn(*args, **kwargs):
-        return fn(*args, **kwargs)
+    fname = fn.__name__
+    def aliased_fn(self, *args, **kwargs):
+        return getattr(self, fname)(*args, **kwargs)
 
     if alias_name is not None:
         aliased_fn.__name__ = alias_name
 
-    doc_str = 'An alias to method %s\n' % fn.__name__
+    doc_str = 'An alias to method %s\n' % fname
     if sys.version_info >= (3,):
         from inspect import signature
         sig = str(signature(fn))
@@ -600,6 +618,21 @@ def alias(fn, alias_name=None):
 
     aliased_fn.__doc__ = doc_str
     return aliased_fn
+
+def class_as_method(cls):
+    '''
+    The statement "fn1 = alias(Class)" is equivalent to:
+
+    .. code-block:: python
+        def fn1(self, *args, **kwargs):
+            return Class(self, *args, **kwargs)
+    '''
+    def fn(obj, *args, **kwargs):
+        return cls(obj, *args, **kwargs)
+    fn.__doc__ = cls.__doc__
+    fn.__name__ = cls.__name__
+    fn.__module__ = cls.__module__
+    return fn
 
 def import_as_method(fn, default_keys=None):
     '''
@@ -678,8 +711,6 @@ def izip(*args):
     else:
         return zip(*args)
 
-from threading import Thread
-from multiprocessing import Queue, Process
 class ProcessWithReturnValue(Process):
     def __init__(self, group=None, target=None, name=None, args=(),
                  kwargs=None):
@@ -693,10 +724,10 @@ class ProcessWithReturnValue(Process):
                 raise e
         Process.__init__(self, group, qwrap, name, args, kwargs)
     def join(self):
+        Process.join(self)
         if self._e is not None:
-            raise ProcessRuntimeError('Error on process %s' % self)
+            raise ProcessRuntimeError('Error on process %s:\n%s' % (self, self._e))
         else:
-            Process.join(self)
             return self._q.get()
     get = join
 
@@ -716,10 +747,10 @@ class ThreadWithReturnValue(Thread):
                 raise e
         Thread.__init__(self, group, qwrap, name, args, kwargs)
     def join(self):
+        Thread.join(self)
         if self._e is not None:
-            raise ThreadRuntimeError('Error on thread %s' % self)
+            raise ThreadRuntimeError('Error on thread %s:\n%s' % (self, self._e))
         else:
-            Thread.join(self)
 # Note: If the return value of target is huge, Queue.get may raise
 # SystemError: NULL result without error in PyObject_Call
 # It is because return value is cached somewhere by pickle but pickle is
@@ -739,10 +770,9 @@ class ThreadWithTraceBack(Thread):
                 raise e
         Thread.__init__(self, group, qwrap, name, args, kwargs)
     def join(self):
+        Thread.join(self)
         if self._e is not None:
-            raise ThreadRuntimeError('Error on thread %s' % self)
-        else:
-            Thread.join(self)
+            raise ThreadRuntimeError('Error on thread %s:\n%s' % (self, self._e))
 
 class ThreadRuntimeError(RuntimeError):
     pass
@@ -788,7 +818,8 @@ class call_in_background(object):
 
     def __init__(self, *fns, **kwargs):
         self.fns = fns
-        self.handler = None
+        self.executor = None
+        self.handlers = [None] * len(self.fns)
         self.sync = kwargs.get('sync', not ASYNC_IO)
 
     if h5py.version.version[:4] == '2.2.': # h5py-2.2.* has bug in threading mode
@@ -801,6 +832,10 @@ class call_in_background(object):
 
     else:
         def __enter__(self):
+            fns = self.fns
+            handlers = self.handlers
+            ntasks = len(self.fns)
+
             if self.sync or imp.lock_held():
 # Some modules like nosetests, coverage etc
 #   python -m unittest test_xxx.py  or  nosetests test_xxx.py
@@ -809,29 +844,52 @@ class call_in_background(object):
 # https://github.com/paramiko/paramiko/issues/104
 # https://docs.python.org/2/library/threading.html#importing-in-threaded-code
 # Disable the asynchoronous mode for safe importing
-                def def_async_fn(fn):
-                    return fn
+                def def_async_fn(i):
+                    return fns[i]
 
-            else:
-                # Enable back-ground mode
-                def def_async_fn(fn):
+            elif ThreadPoolExecutor is None: # async mode, old python
+                def def_async_fn(i):
                     def async_fn(*args, **kwargs):
-                        if self.handler is not None:
-                            self.handler.join()
-                        self.handler = ThreadWithTraceBack(target=fn, args=args,
-                                                           kwargs=kwargs)
-                        self.handler.start()
-                        return self.handler
+                        if self.handlers[i] is not None:
+                            self.handlers[i].join()
+                        self.handlers[i] = ThreadWithTraceBack(target=fns[i], args=args,
+                                                               kwargs=kwargs)
+                        self.handlers[i].start()
+                        return self.handlers[i]
+                    return async_fn
+
+            else: # multiple executors in async mode, python 2.7.12 or newer
+                executor = self.executor = ThreadPoolExecutor(max_workers=ntasks)
+                def def_async_fn(i):
+                    def async_fn(*args, **kwargs):
+                        if handlers[i] is not None:
+                            try:
+                                handlers[i].result()
+                            except Exception as e:
+                                raise ThreadRuntimeError('Error on thread %s:\n%s'
+                                                         % (self, e))
+                        handlers[i] = executor.submit(fns[i], *args, **kwargs)
+                        return handlers[i]
                     return async_fn
 
             if len(self.fns) == 1:
-                return def_async_fn(self.fns[0])
+                return def_async_fn(0)
             else:
-                return [def_async_fn(fn) for fn in self.fns]
+                return [def_async_fn(i) for i in range(ntasks)]
 
     def __exit__(self, type, value, traceback):
-        if self.handler is not None:
-            self.handler.join()
+        for handler in self.handlers:
+            if handler is not None:
+                try:
+                    if ThreadPoolExecutor is None:
+                        handler.join()
+                    else:
+                        handler.result()
+                except Exception as e:
+                    raise ThreadRuntimeError('Error on thread %s:\n%s' % (self, e))
+
+        if self.executor is not None:
+            self.executor.shutdown(wait=True)
 
 
 class H5TmpFile(h5py.File):
@@ -853,17 +911,18 @@ class H5TmpFile(h5py.File):
     >>> from pyscf import lib
     >>> ftmp = lib.H5TmpFile()
     '''
-    def __init__(self, filename=None, *args, **kwargs):
+    def __init__(self, filename=None, mode='a', *args, **kwargs):
         if filename is None:
             tmpfile = tempfile.NamedTemporaryFile(dir=param.TMPDIR)
             filename = tmpfile.name
-        h5py.File.__init__(self, filename, *args, **kwargs)
+        h5py.File.__init__(self, filename, mode, *args, **kwargs)
 #FIXME: Does GC flush/close the HDF5 file when releasing the resource?
 # To make HDF5 file reusable, file has to be closed or flushed
     def __del__(self):
         try:
             self.close()
-        except ValueError:  # if close() is called twice
+        except:
+        #except ValueError:  # if close() is called twice
             pass
 
 def fingerprint(a):
@@ -893,6 +952,10 @@ class GradScanner:
     @property
     def e_tot(self):
         return self.base.e_tot
+    @e_tot.setter
+    def e_tot(self, x):
+        self.base.e_tot = x
+
     @property
     def converged(self):
 # Some base methods like MP2 does not have the attribute converged

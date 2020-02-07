@@ -20,6 +20,7 @@
 Generalized Hartree-Fock for periodic systems with k-point sampling
 '''
 
+from functools import reduce
 import numpy as np
 import scipy.linalg
 import pyscf.scf.ghf as mol_ghf
@@ -33,7 +34,7 @@ from pyscf import __config__
 
 
 def get_jk(mf, cell=None, dm_kpts=None, hermi=0, kpts=None, kpts_band=None,
-           with_j=True, with_k=True):
+           with_j=True, with_k=True, **kwargs):
     if cell is None: cell = mf.cell
     if dm_kpts is None: dm_kpts = mf.make_rdm1()
     if kpts is None: kpts = mf.kpts
@@ -141,6 +142,26 @@ class KGHF(pbcghf.GHF, khf.KSCF):
         vj, vk = self.get_jk(cell, dm_kpts, hermi, kpts, kpts_band, True, True)
         vhf = vj - vk
         return vhf
+
+    def get_grad(self, mo_coeff_kpts, mo_occ_kpts, fock=None):
+        '''
+        returns 1D array of gradients, like non K-pt version
+        note that occ and virt indices of different k pts now occur
+        in sequential patches of the 1D array
+        '''
+        if fock is None:
+            dm1 = self.make_rdm1(mo_coeff_kpts, mo_occ_kpts)
+            fock = self.get_hcore(self.cell, self.kpts) + self.get_veff(self.cell, dm1)
+
+        def grad(mo, mo_occ, fock):
+            occidx = mo_occ > 0
+            viridx = ~occidx
+            g = reduce(np.dot, (mo[:,viridx].conj().T, fock, mo[:,occidx]))
+            return g.ravel()
+
+        grad_kpts = [grad(mo, mo_occ_kpts[k], fock[k])
+                     for k, mo in enumerate(mo_coeff_kpts)]
+        return np.hstack(grad_kpts)
 
     def get_bands(self, kpts_band, cell=None, dm_kpts=None, kpts=None):
         '''Get energy bands at the given (arbitrary) 'band' k-points.

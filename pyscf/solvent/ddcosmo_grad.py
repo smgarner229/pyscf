@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2019 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,8 +50,8 @@ from pyscf.grad import rks as rks_grad
 # extended and used as the general interface to initialize solvent gradients.
 def ddcosmo_grad(grad_method, pcmobj=None):
     grad_method_class = grad_method.__class__
-    class WithSolventGrad(grad_method.__class__):
-        def __init__(self, pcmobj):
+    class WithSolventGrad(grad_method_class):
+        def __init__(self, grad_method, pcmobj):
             self.__dict__.update(grad_method.__dict__)
             self.with_solvent = pcmobj
             self.de_solvent = None
@@ -60,7 +60,7 @@ def ddcosmo_grad(grad_method, pcmobj=None):
 
         def kernel(self, dm=None, atmlst=None):
             if dm is None:
-                dm = grad_method.base.make_rdm1(ao_repr=True)
+                dm = self.base.make_rdm1(ao_repr=True)
 
             # de_solvent needs to be called first because _finalize method
             # is called in the grad_method.kernel function.  de_solvent is
@@ -71,7 +71,7 @@ def ddcosmo_grad(grad_method, pcmobj=None):
 
             if self.verbose >= logger.NOTE:
                 logger.note(self, '--------------- %s (%s) gradients ---------------',
-                            grad_method.base.__class__.__name__,
+                            self.base.__class__.__name__,
                             self.with_solvent.__class__.__name__)
                 rhf_grad._write(self, self.mol, self.de, self.atmlst)
                 logger.note(self, '----------------------------------------------')
@@ -84,7 +84,19 @@ def ddcosmo_grad(grad_method, pcmobj=None):
 
     if pcmobj is None:
         pcmobj = ddcosmo.DDCOSMO(mf.mol)
-    return WithSolventGrad(pcmobj)
+    return WithSolventGrad(grad_method, pcmobj)
+
+
+## Inject DDCOSMO gradients into other modules
+# Since gradients are computed based on Hellmann-Feynman theorem, it does not
+# make too much sense to add solvent gradients contribution if the underlying
+# single point calculation is not converged with solvent.
+#from pyscf import grad
+#for mod in dir(grad):
+#    mod = getattr(grad, mod)
+#    if hasattr(mod, 'Gradients'):
+#        mod.Gradients.DDCOSMO = ddcosmo_grad
+#del(mod, grad)
 
 
 def kernel(pcmobj, dm, verbose=None):

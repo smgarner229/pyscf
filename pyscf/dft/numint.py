@@ -719,7 +719,7 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
         xc_code : str
             XC functional description.
             See :func:`parse_xc` of pyscf/dft/libxc.py for more details.
-        dms : 2D array a list of 2D arrays
+        dms : 2D array or a list of 2D arrays
             Density matrix or multiple density matrices
 
     Kwargs:
@@ -754,7 +754,10 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
 
     nelec = numpy.zeros(nset)
     excsum = numpy.zeros(nset)
-    vmat = numpy.zeros((nset,nao,nao))
+    if isinstance(dms, numpy.ndarray):
+        vmat = numpy.zeros((nset,nao,nao), dtype=dms.dtype)
+    else:
+        vmat = numpy.zeros((nset,nao,nao), dtype=numpy.result_type(*dms))
     aow = None
     if xctype == 'LDA':
         ao_deriv = 0
@@ -763,7 +766,8 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
             aow = numpy.ndarray(ao.shape, order='F', buffer=aow)
             for idm in range(nset):
                 rho = make_rho(idm, ao, mask, 'LDA')
-                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1, verbose)[:2]
+                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1,
+                                      verbose=verbose)[:2]
                 vrho = vxc[0]
                 den = rho * weight
                 nelec[idm] += den.sum()
@@ -781,7 +785,8 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
             aow = numpy.ndarray(ao[0].shape, order='F', buffer=aow)
             for idm in range(nset):
                 rho = make_rho(idm, ao, mask, 'GGA')
-                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1, verbose)[:2]
+                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1,
+                                      verbose=verbose)[:2]
                 den = rho[0] * weight
                 nelec[idm] += den.sum()
                 excsum[idm] += numpy.dot(den, exc)
@@ -844,7 +849,8 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
             aow = numpy.ndarray(ao[0].shape, order='F', buffer=aow)
             for idm in range(nset):
                 rho = make_rho(idm, ao, mask, 'MGGA')
-                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1, verbose)[:2]
+                exc, vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1,
+                                      verbose=verbose)[:2]
                 vrho, vsigma, vlapl, vtau = vxc[:4]
                 den = rho[0] * weight
                 nelec[idm] += den.sum()
@@ -865,11 +871,11 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
                 rho = exc = vxc = vrho = vsigma = wv = None
 
     for i in range(nset):
-        vmat[i] = vmat[i] + vmat[i].T
+        vmat[i] = vmat[i] + vmat[i].conj().T
     if nset == 1:
         nelec = nelec[0]
         excsum = excsum[0]
-        vmat = vmat.reshape(nao,nao)
+        vmat = vmat[0]
     return nelec, excsum, vmat
 
 def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
@@ -929,7 +935,7 @@ def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
 
     nelec = numpy.zeros((2,nset))
     excsum = numpy.zeros(nset)
-    vmat = numpy.zeros((2,nset,nao,nao))
+    vmat = numpy.zeros((2,nset,nao,nao), dtype=numpy.result_type(dma, dmb))
     aow = None
     if xctype == 'LDA':
         ao_deriv = 0
@@ -940,7 +946,7 @@ def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
                 rho_a = make_rhoa(idm, ao, mask, xctype)
                 rho_b = make_rhob(idm, ao, mask, xctype)
                 exc, vxc = ni.eval_xc(xc_code, (rho_a, rho_b),
-                                      1, relativity, 1, verbose)[:2]
+                                      1, relativity, 1, verbose=verbose)[:2]
                 vrho = vxc[0]
                 den = rho_a * weight
                 nelec[0,idm] += den.sum()
@@ -967,7 +973,7 @@ def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
                 rho_a = make_rhoa(idm, ao, mask, xctype)
                 rho_b = make_rhob(idm, ao, mask, xctype)
                 exc, vxc = ni.eval_xc(xc_code, (rho_a, rho_b),
-                                      1, relativity, 1, verbose)[:2]
+                                      1, relativity, 1, verbose=verbose)[:2]
                 den = rho_a[0]*weight
                 nelec[0,idm] += den.sum()
                 excsum[idm] += numpy.dot(den, exc)
@@ -995,7 +1001,7 @@ def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
                 rho_a = make_rhoa(idm, ao, mask, xctype)
                 rho_b = make_rhob(idm, ao, mask, xctype)
                 exc, vxc = ni.eval_xc(xc_code, (rho_a, rho_b),
-                                      1, relativity, 1, verbose)[:2]
+                                      1, relativity, 1, verbose=verbose)[:2]
                 vrho, vsigma, vlapl, vtau = vxc[:4]
                 den = rho_a[0]*weight
                 nelec[0,idm] += den.sum()
@@ -1025,8 +1031,8 @@ def nr_uks(ni, mol, grids, xc_code, dms, relativity=0, hermi=0,
                 rho_a = rho_b = exc = vxc = vrho = vsigma = wva = wvb = None
 
     for i in range(nset):
-        vmat[0,i] = vmat[0,i] + vmat[0,i].T
-        vmat[1,i] = vmat[1,i] + vmat[1,i].T
+        vmat[0,i] = vmat[0,i] + vmat[0,i].conj().T
+        vmat[1,i] = vmat[1,i] + vmat[1,i].conj().T
     if isinstance(dma, numpy.ndarray) and dma.ndim == 2:
         vmat = vmat[:,0]
         nelec = nelec.reshape(2)
@@ -1103,7 +1109,10 @@ def nr_rks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
     shls_slice = (0, mol.nbas)
     ao_loc = mol.ao_loc_nr()
 
-    vmat = numpy.zeros((nset,nao,nao))
+    if isinstance(dms, numpy.ndarray):
+        vmat = numpy.zeros((nset,nao,nao), dtype=dms.dtype)
+    else:
+        vmat = numpy.zeros((nset,nao,nao), dtype=numpy.result_type(*dms))
     aow = None
     if xctype == 'LDA':
         ao_deriv = 0
@@ -1114,7 +1123,8 @@ def nr_rks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
             aow = numpy.ndarray(ao.shape, order='F', buffer=aow)
             if fxc is None:
                 rho = make_rho0(0, ao, mask, 'LDA')
-                fxc0 = ni.eval_xc(xc_code, rho, 0, relativity, 2, verbose)[2]
+                fxc0 = ni.eval_xc(xc_code, rho, 0, relativity, 2,
+                                  verbose=verbose)[2]
                 frr = fxc0[0]
             else:
                 frr = fxc[0][ip:ip+ngrid]
@@ -1139,7 +1149,8 @@ def nr_rks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
             else:
                 rho = numpy.asarray(rho0[:,ip:ip+ngrid], order='C')
             if vxc is None or fxc is None:
-                vxc0, fxc0 = ni.eval_xc(xc_code, rho, 0, relativity, 2, verbose)[1:3]
+                vxc0, fxc0 = ni.eval_xc(xc_code, rho, 0, relativity, 2,
+                                        verbose=verbose)[1:3]
             else:
                 vxc0 = (None, vxc[1][ip:ip+ngrid])
                 fxc0 = (fxc[0][ip:ip+ngrid], fxc[1][ip:ip+ngrid], fxc[2][ip:ip+ngrid])
@@ -1184,7 +1195,10 @@ def nr_rks_fxc_st(ni, mol, grids, xc_code, dm0, dms_alpha, relativity=0, singlet
     shls_slice = (0, mol.nbas)
     ao_loc = mol.ao_loc_nr()
 
-    vmat = numpy.zeros((nset,nao,nao))
+    if isinstance(dms_alpha, numpy.ndarray):
+        vmat = numpy.zeros((nset,nao,nao), dtype=dms_alpha.dtype)
+    else:
+        vmat = numpy.zeros((nset,nao,nao), dtype=numpy.result_type(*dms_alpha))
     aow = None
     if xctype == 'LDA':
         ao_deriv = 0
@@ -1382,7 +1396,7 @@ def nr_uks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
     shls_slice = (0, mol.nbas)
     ao_loc = mol.ao_loc_nr()
 
-    vmat = numpy.zeros((2,nset,nao,nao))
+    vmat = numpy.zeros((2,nset,nao,nao), dtype=numpy.result_type(dma, dmb))
     aow = None
     if xctype == 'LDA':
         ao_deriv = 0
@@ -1394,7 +1408,8 @@ def nr_uks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
             if fxc is None:
                 rho0a = make_rho0(0, ao, mask, xctype)
                 rho0b = make_rho0(1, ao, mask, xctype)
-                fxc0 = ni.eval_xc(xc_code, (rho0a,rho0b), 1, relativity, 2, verbose)[2]
+                fxc0 = ni.eval_xc(xc_code, (rho0a,rho0b), 1, relativity, 2,
+                                  verbose=verbose)[2]
                 u_u, u_d, d_d = fxc0[0].T
             else:
                 u_u, u_d, d_d = fxc[0][ip:ip+ngrid].T
@@ -1428,7 +1443,8 @@ def nr_uks_fxc(ni, mol, grids, xc_code, dm0, dms, relativity=0, hermi=0,
                 rho0a = rho0[0][:,ip:ip+ngrid]
                 rho0b = rho0[1][:,ip:ip+ngrid]
             if vxc is None or fxc is None:
-                vxc0, fxc0 = ni.eval_xc(xc_code, (rho0a,rho0b), 1, relativity, 2, verbose)[1:3]
+                vxc0, fxc0 = ni.eval_xc(xc_code, (rho0a,rho0b), 1, relativity, 2,
+                                        verbose=verbose)[1:3]
             else:
                 vxc0 = (None, vxc[1][ip:ip+ngrid])
                 fxc0 = (fxc[0][ip:ip+ngrid], fxc[1][ip:ip+ngrid], fxc[2][ip:ip+ngrid])
@@ -1833,8 +1849,10 @@ def get_rho(ni, mol, dm, grids, max_memory=2000):
 
 
 class NumInt(object):
+    libxc = libxc
+
     def __init__(self):
-        self.libxc = libxc
+        self.omega = None  # RSH paramter
 
     @lib.with_doc(nr_vxc.__doc__)
     def nr_vxc(self, mol, grids, xc_code, dms, spin=0, relativity=0, hermi=0,
@@ -1882,12 +1900,14 @@ class NumInt(object):
     def eval_rho(self, mol, ao, dm, non0tab=None, xctype='LDA', hermi=0, verbose=None):
         return eval_rho(mol, ao, dm, non0tab, xctype, hermi, verbose)
 
-    def block_loop(self, mol, grids, nao, deriv=0, max_memory=2000,
+    def block_loop(self, mol, grids, nao=None, deriv=0, max_memory=2000,
                    non0tab=None, blksize=None, buf=None):
         '''Define this macro to loop over grids by blocks.
         '''
         if grids.coords is None:
             grids.build(with_non0tab=True)
+        if nao is None:
+            nao = mol.nao
         ngrids = grids.coords.shape[0]
         comp = (deriv+1)*(deriv+2)*(deriv+3)//6
 # NOTE to index grids.non0tab, the blksize needs to be the integer multiplier of BLKSIZE
@@ -1946,8 +1966,11 @@ class NumInt(object):
     def rsh_coeff(self, xc_code):
         return self.libxc.rsh_coeff(xc_code)
 
-    def eval_xc(self, xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
-        return self.libxc.eval_xc(xc_code, rho, spin, relativity, deriv, verbose)
+    def eval_xc(self, xc_code, rho, spin=0, relativity=0, deriv=1, omega=None,
+                verbose=None):
+        if omega is None: omega = self.omega
+        return self.libxc.eval_xc(xc_code, rho, spin, relativity, deriv,
+                                  omega, verbose)
     eval_xc.__doc__ = libxc.eval_xc.__doc__
 
     def _xc_type(self, xc_code):
@@ -1966,6 +1989,9 @@ class NumInt(object):
         beta = c_SR - c_LR
         '''
         omega, alpha, beta = self.rsh_coeff(xc_code)
+        if self.omega is not None:
+            omega = self.omega
+
         if abs(omega) > 1e-10:
             hyb = alpha + beta
         else:

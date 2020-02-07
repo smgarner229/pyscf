@@ -16,6 +16,7 @@
 # Author: Qiming Sun <osirpt.sun@gmail.com>
 #
 
+import os
 import time
 from functools import reduce
 import numpy
@@ -24,7 +25,7 @@ from pyscf.mcscf import mc1step, addons
 
 
 
-def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
+def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
            ci0=None, callback=None, verbose=None, dump_chk=True):
     if verbose is None:
         verbose = casscf.verbose
@@ -37,7 +38,14 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
 
     mo = mo_coeff
     nmo = mo.shape[1]
+    print "nmo", nmo
     eris = casscf.ao2mo(mo)
+    #print 'ci0', ci0
+    if os.environ.get("cycle") is not None:
+        if (int(os.environ["cycle"])+1) > 1:
+            rdm1_pregeom_AO = addons.make_rdm12(casscf, mo, ci0) #, rdm2Target_AO
+            #print "rdm1_pregeom_AO"
+            #print rdm1_pregeom_AO
     e_tot, e_cas, fcivec = casscf.casci(mo, ci0, eris, log, locals())    
     if casscf.ncas == nmo and not casscf.internal_rotation:
         if casscf.canonicalization:
@@ -52,7 +60,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
     if conv_tol_grad is None:
         conv_tol_grad = numpy.sqrt(tol)
         logger.info(casscf, 'Set conv_tol_grad to %g', conv_tol_grad)
-    conv_tol_ddm = conv_tol_grad #* 3
+    conv_tol_ddm = 3.*conv_tol_grad
     conv = False
     de, elast = e_tot, e_tot
     totmicro = totinner = 0
@@ -61,7 +69,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
 
     #Lan generates targeted rdms
     rdm1Target_AO = addons.make_rdm12(casscf, mo, fcivec) #, rdm2Target_AO
-    casdm1Target, casdm2Target = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
+    #casdm1Target, casdm2Target = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
     
     t2m = t1m = log.timer('Initializing 2-step CASSCF', *cput0)
     imacro = 0
@@ -197,6 +205,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=None,
         casscf.dump_chk(locals())
 
     log.timer('2-step CASSCF', *cput0)
+    print "fcivec", fcivec
     return conv, e_tot, e_cas, fcivec, mo, mo_energy
 
 

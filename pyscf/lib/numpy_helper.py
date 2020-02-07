@@ -27,6 +27,7 @@ import re
 import numpy
 import scipy.linalg
 from pyscf.lib import misc
+from numpy import asarray  # For backward compatibility
 
 EINSUM_MAX_SIZE = getattr(misc.__config__, 'lib_einsum_max_size', 2000)
 
@@ -100,18 +101,19 @@ else:
         einsum_args.insert(0, ((a, b), idx_removed, einsum_str, indices_in))
         return operands, einsum_args
 
+_numpy_einsum = numpy.einsum
 def _contract(subscripts, *tensors, **kwargs):
     idx_str = subscripts.replace(' ','')
     indices  = idx_str.replace(',', '').replace('->', '')
     if '->' not in idx_str or any(indices.count(x)>2 for x in set(indices)):
-        return numpy.einsum(idx_str, *tensors)
+        return _numpy_einsum(idx_str, *tensors)
 
     A, B = tensors
     # Call numpy.asarray because A or B may be HDF5 Datasets 
     A = numpy.asarray(A, order='A')
     B = numpy.asarray(B, order='A')
     if A.size < EINSUM_MAX_SIZE or B.size < EINSUM_MAX_SIZE:
-        return numpy.einsum(idx_str, *tensors)
+        return _numpy_einsum(idx_str, *tensors)
 
     C_dtype = numpy.result_type(A, B)
     if FOUND_TBLIS and C_dtype == numpy.double:
@@ -142,12 +144,12 @@ def _contract(subscripts, *tensors, **kwargs):
 
     # duplicated indices 'in,ijj->n'
     if len(rangeA) != A.ndim or len(rangeB) != B.ndim:
-        return numpy.einsum(idx_str, A, B)
+        return _numpy_einsum(idx_str, A, B)
 
     # Find the shared indices being summed over
     shared_idxAB = set(idxA).intersection(idxB)
     if len(shared_idxAB) == 0: # Indices must overlap
-        return numpy.einsum(idx_str, A, B)
+        return _numpy_einsum(idx_str, A, B)
 
     idxAt = list(idxA)
     idxBt = list(idxB)
@@ -229,7 +231,7 @@ def einsum(subscripts, *tensors, **kwargs):
 
     subscripts = subscripts.replace(' ','')
     if len(tensors) <= 1 or '...' in subscripts:
-        out = numpy.einsum(subscripts, *tensors, **kwargs)
+        out = _numpy_einsum(subscripts, *tensors, **kwargs)
     elif len(tensors) <= 2:
         out = _contract(subscripts, *tensors, **kwargs)
     else:
@@ -246,7 +248,7 @@ def einsum(subscripts, *tensors, **kwargs):
             inds, idx_rm, einsum_str, remaining = contraction[:4]
             tmp_operands = [tensors.pop(x) for x in inds]
             if len(tmp_operands) > 2:
-                out = numpy.einsum(einsum_str, *tmp_operands)
+                out = _numpy_einsum(einsum_str, *tmp_operands)
             else:
                 out = contract(einsum_str, *tmp_operands)
             tensors.append(out)
@@ -278,8 +280,12 @@ def pack_tril(mat, axis=-1, out=None):
         out = numpy.ndarray(shape, mat.dtype, buffer=out)
         if mat.dtype == numpy.double:
             fn = _np_helper.NPdpack_tril_2d
-        else:
+        elif mat.dtype == numpy.complex:
             fn = _np_helper.NPzpack_tril_2d
+        else:
+            out[:] = mat[numpy.tril_indices(nd)]
+            return out
+
         fn(ctypes.c_int(count), ctypes.c_int(nd),
            out.ctypes.data_as(ctypes.c_void_p),
            mat.ctypes.data_as(ctypes.c_void_p))
@@ -329,16 +335,15 @@ def unpack_tril(tril, filltriu=HERMITIAN, axis=-1, out=None):
         nd = int(numpy.sqrt(nd*2))
         shape = (count,nd,nd)
 
-    if (numpy.issubdtype(tril.dtype, numpy.integer) and
-        (filltriu == HERMITIAN or filltriu == SYMMETRIC)):
-        idx = numpy.tril_indices(nd)
-        idxy = numpy.empty((nd,nd), dtype=numpy.int)
-        idxy[idx[0],idx[1]] = idxy[idx[1],idx[0]] = numpy.arange(nd*(nd+1)//2)
-        out = numpy.take(tril, idxy.ravel(), axis=axis, out=out)
-        if axis == 0 and tril.ndim == 1:
-            return out.reshape(nd,nd,-1)
+    if (tril.dtype != numpy.double and tril.dtype != numpy.complex):
+        out = numpy.ndarray(shape, tril.dtype, buffer=out)
+        idx, idy = numpy.tril_indices(nd)
+        if filltriu == ANTIHERMI:
+            out[...,idy,idx] = -tril
         else:
-            return out.reshape(shape)
+            out[...,idy,idx] = tril
+        out[...,idx,idy] = tril
+        return out
 
     elif tril.ndim == 1 or axis == -1 or axis == tril.ndim-1:
         out = numpy.ndarray(shape, tril.dtype, buffer=out)
@@ -391,8 +396,14 @@ def unpack_row(tril, row_id):
     mat = numpy.empty(nd, tril.dtype)
     if tril.dtype == numpy.double:
         fn = _np_helper.NPdunpack_row
-    else:
+    elif tril.dtype == numpy.complex:
         fn = _np_helper.NPzunpack_row
+    else:
+        p0 = row_id*(row_id+1)//2
+        p1 = row_id*(row_id+1)//2 + row_id
+        idx = numpy.arange(row_id, nd)
+        return numpy.append(tril[p0:p1], tril[idx*(idx+1)//2+row_id])
+
     fn.restype = ctypes.c_void_p
     fn(ctypes.c_int(nd), ctypes.c_int(row_id),
        tril.ctypes.data_as(ctypes.c_void_p),
@@ -435,8 +446,10 @@ def hermi_triu(mat, hermi=HERMITIAN, inplace=True):
 
     if mat.dtype == numpy.double:
         fn = _np_helper.NPdsymm_triu
-    else:
+    elif mat.dtype == numpy.complex:
         fn = _np_helper.NPzhermi_triu
+    else:
+        raise NotImplementedError
     fn.restype = ctypes.c_void_p
     fn(ctypes.c_int(nd), buf.ctypes.data_as(ctypes.c_void_p),
        ctypes.c_int(hermi))
@@ -473,12 +486,14 @@ def take_2d(a, idx, idy, out=None):
     '''
     a = numpy.asarray(a, order='C')
     out = numpy.ndarray((len(idx),len(idy)), dtype=a.dtype, buffer=out)
-    if a.dtype == numpy.double:
-        fn = _np_helper.NPdtake_2d
-    else:
-        fn = _np_helper.NPztake_2d
     idx = numpy.asarray(idx, dtype=numpy.int32)
     idy = numpy.asarray(idy, dtype=numpy.int32)
+    if a.dtype == numpy.double:
+        fn = _np_helper.NPdtake_2d
+    elif a.dtype == numpy.complex:
+        fn = _np_helper.NPztake_2d
+    else:
+        return a[idx[:,None],idy]
     fn(out.ctypes.data_as(ctypes.c_void_p),
        a.ctypes.data_as(ctypes.c_void_p),
        idx.ctypes.data_as(ctypes.c_void_p),
@@ -501,12 +516,15 @@ def takebak_2d(out, a, idx, idy):
     '''
     assert(out.flags.c_contiguous)
     a = numpy.asarray(a, order='C')
-    if a.dtype == numpy.double:
-        fn = _np_helper.NPdtakebak_2d
-    else:
-        fn = _np_helper.NPztakebak_2d
     idx = numpy.asarray(idx, dtype=numpy.int32)
     idy = numpy.asarray(idy, dtype=numpy.int32)
+    if a.dtype == numpy.double:
+        fn = _np_helper.NPdtakebak_2d
+    elif a.dtype == numpy.complex:
+        fn = _np_helper.NPztakebak_2d
+    else:
+        out[idx[:,None], idy] += a
+        return out
     fn(out.ctypes.data_as(ctypes.c_void_p),
        a.ctypes.data_as(ctypes.c_void_p),
        idx.ctypes.data_as(ctypes.c_void_p),
@@ -537,7 +555,8 @@ def transpose(a, axes=None, inplace=False, out=None):
             a[c0:c1,c0:c1] = a[c0:c1,c0:c1].T
         return a
 
-    if not a.flags.c_contiguous:
+    if (not a.flags.c_contiguous
+        or (a.dtype != numpy.double and a.dtype != numpy.complex)):
         if a.ndim == 2:
             arow, acol = a.shape
             out = numpy.empty((acol,arow), a.dtype)
@@ -602,7 +621,8 @@ def hermi_sum(a, axes=None, hermi=HERMITIAN, inplace=False, out=None):
     else:
         out = numpy.ndarray(a.shape, a.dtype, buffer=out)
 
-    if not a.flags.c_contiguous:
+    if (not a.flags.c_contiguous
+        or (a.dtype != numpy.double and a.dtype != numpy.complex)):
         if a.ndim == 2:
             na = a.shape[0]
             for c0, c1 in misc.prange(0, na, BLOCK_DIM):
@@ -824,16 +844,6 @@ def _zgemm(trans_a, trans_b, m, n, k, a, b, c, alpha=1, beta=0,
                        (ctypes.c_double*2)(beta.real, beta.imag))
     return c
 
-def asarray(a, dtype=None, order=None):
-    '''Convert a list of N-dim arrays to a (N+1) dim array.  It is equivalent to
-    numpy.asarray function.
-    '''
-    try:  # numpy.stack function is not available in numpy-1.8
-        a = numpy.stack(a)
-    except:
-        pass
-    return numpy.asarray(a, dtype, order)
-
 def frompointer(pointer, count, dtype=float):
     '''Interpret a buffer that the pointer refers to as a 1-dimensional array.
 
@@ -870,7 +880,7 @@ if LooseVersion(numpy.__version__) <= LooseVersion('1.6.0'):
             axes = string.ascii_lowercase[:x.ndim]
             target = axes.replace(axes[axis], '')
             descr = '%s,%s->%s' % (axes, axes, target)
-            xx = numpy.einsum(descr, x.conj(), x)
+            xx = _numpy_einsum(descr, x.conj(), x)
             return numpy.sqrt(xx.real)
 else:
     norm = numpy.linalg.norm
@@ -981,7 +991,7 @@ def direct_sum(subscripts, *operands):
         unisymb = set(symb)
         if len(unisymb) != len(symb):
             unisymb = ''.join(unisymb)
-            op = numpy.einsum('->'.join((symb, unisymb)), op)
+            op = _numpy_einsum('->'.join((symb, unisymb)), op)
             src[i] = unisymb
         if i == 0:
             if sign[i] is '+':
@@ -993,7 +1003,7 @@ def direct_sum(subscripts, *operands):
         else:
             out = out.reshape(out.shape+(1,)*op.ndim) - op
 
-    out = numpy.einsum('->'.join((''.join(src), dest)), out)
+    out = _numpy_einsum('->'.join((''.join(src), dest)), out)
     out.flags.writeable = True  # old numpy has this issue
     return out
 

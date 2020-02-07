@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2019 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -181,6 +181,8 @@ def energy_elec(mf, dm_kpts=None, h1e_kpts=None, vhf_kpts=None):
     e1+= 1./nkpts * np.einsum('kij,kji', dm_kpts[1], h1e_kpts)
     e_coul = 1./nkpts * np.einsum('kij,kji', dm_kpts[0], vhf_kpts[0]) * 0.5
     e_coul+= 1./nkpts * np.einsum('kij,kji', dm_kpts[1], vhf_kpts[1]) * 0.5
+    mf.scf_summary['e1'] = e1.real
+    mf.scf_summary['e2'] = e_coul.real
     logger.debug(mf, 'E1 = %s  E_coul = %s', e1, e_coul)
     if CHECK_COULOMB_IMAG and abs(e_coul.imag > mf.cell.precision*10):
         logger.warn(mf, "Coulomb energy has imaginary part %s. "
@@ -224,7 +226,7 @@ def canonicalize(mf, mo_coeff_kpts, mo_occ_kpts, fock=None):
     '''
     if fock is None:
         dm = mf.make_rdm1(mo_coeff_kpts, mo_occ_kpts)
-        fock = mf.get_hcore() + mf.get_jk(mf.cell, dm)
+        fock = mf.get_fock(dm=dm)
 
     def eig_(fock, mo_coeff, idx, es, cs):
         if np.count_nonzero(idx) > 0:
@@ -379,8 +381,8 @@ class KUHF(pbcuhf.UHF, khf.KSCF):
     def nelec(self, x):
         self._nelec = x
 
-    def dump_flags(self):
-        khf.KSCF.dump_flags(self)
+    def dump_flags(self, verbose=None):
+        khf.KSCF.dump_flags(self, verbose)
         logger.info(self, 'number of electrons per unit cell  '
                     'alpha = %d beta = %d', *self.nelec)
         return self
@@ -419,20 +421,19 @@ class KUHF(pbcuhf.UHF, khf.KSCF):
             dm_kpts[1,:] *= 0.99  # To slightly break spin symmetry
             assert dm_kpts.shape[0]==2
 
-        if cell.dimension < 3:
-            ne = np.einsum('xkij,kji->x', dm_kpts, self.get_ovlp(cell)).real
-            # FIXME: consider the fractional num_electron or not? This maybe
-            # relates to the charged system.
-            nkpts = len(self.kpts)
-            nelec = np.asarray(self.nelec)
-            if np.any(abs(ne - nelec) > 1e-7*nkpts):
-                logger.warn(self, 'Big error detected in the electron number '
-                            'of initial guess density matrix (Ne/cell = %g)!\n'
-                            '  This can cause huge error in Fock matrix and '
-                            'lead to instability in SCF for low-dimensional '
-                            'systems.\n  DM is normalized to the number '
-                            'of electrons', ne.sum()/nkpts)
-                dm_kpts *= (nelec / ne).reshape(2,-1,1,1)
+        ne = np.einsum('xkij,kji->x', dm_kpts, self.get_ovlp(cell)).real
+        # FIXME: consider the fractional num_electron or not? This maybe
+        # relates to the charged system.
+        nkpts = len(self.kpts)
+        nelec = np.asarray(self.nelec)
+        if np.any(abs(ne - nelec) > 1e-7*nkpts):
+            logger.debug(self, 'Big error detected in the electron number '
+                        'of initial guess density matrix (Ne/cell = %g)!\n'
+                        '  This can cause huge error in Fock matrix and '
+                        'lead to instability in SCF for low-dimensional '
+                        'systems.\n  DM is normalized wrt the number '
+                        'of electrons %s', ne.mean()/nkpts, nelec/nkpts)
+            dm_kpts *= (nelec / ne).reshape(2,-1,1,1)
         return dm_kpts
 
     get_hcore = khf.KSCF.get_hcore

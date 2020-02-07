@@ -115,7 +115,7 @@ def kernel(mc, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
     de += mf_grad.grad_nuc(mol, atmlst)
     return de
 
-def as_scanner(mcscf_grad):
+def as_scanner(mcscf_grad, envs=None):
     '''Generating a nuclear gradients scanner/solver (for geometry optimizer).
 
     The returned solver is a function. This function requires one argument
@@ -152,8 +152,10 @@ def as_scanner(mcscf_grad):
             else:
                 mol = self.mol.set_geom_(mol_or_geom, inplace=False)
 
+            #print "we are here 111", envs['cycle']
             mc_scanner = self.base
             e_tot = mc_scanner(mol)
+            #print "aaa", mc_scanner
             self.mol = mol
             de = self.kernel(**kwargs)
             return e_tot, de
@@ -184,7 +186,7 @@ class Gradients(lib.StreamObject):
         return self
 
     def kernel(self, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
-               verbose=None):
+               verbose=None, envs=None):
         cput0 = (time.clock(), time.time())
         log = logger.new_logger(self, verbose)
         if atmlst is None:
