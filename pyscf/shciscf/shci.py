@@ -168,6 +168,12 @@ class SHCI(pyscf.lib.StreamObject):
         self.integralFile = "FCIDUMP"
         self.configFile = "input.dat"
         self.outputFile = "output.dat"
+
+        #import shutil
+        #from os import path
+        #if path.exists("output.dat"):
+        #    shutil.copyfile("output.dat")
+            
         if getattr(settings, 'SHCIRUNTIMEDIR', None):
             self.runtimeDir = settings.SHCIRUNTIMEDIR
         else:
@@ -957,6 +963,16 @@ def writeSHCIConfFile(SHCI, nelec, Restart):
                 f.write('%i ' % (2 * i))
             for i in range(int(nelec[1])):
                 f.write('%i ' % (2 * i + 1))
+            #for i in range(int(nelec[0])):
+            #    f.write('%i ' % (2 * i + 1))
+            #for i in range(int(nelec[1])):
+            #    f.write('%i ' % (2 * i + 0))
+            #f.write('\n')
+            #for i in range(int(nelec[0])):
+            #    f.write('%i ' % (2 * i))
+            #for i in range(int(nelec[1])):
+            #    f.write('%i ' % (2 * i + 1))
+            #f.write('\n')
         else:
             from pyscf import symm
             from pyscf.dmrgscf import dmrg_sym
@@ -1034,6 +1050,8 @@ def writeSHCIConfFile(SHCI, nelec, Restart):
 
     # Miscellaneous Keywords
     f.write('\n#misc\n')
+    f.write('spin = 0\n')
+    f.write('Treversal = 1\n')
     f.write('io \n')
     if (SHCI.scratchDirectory != ""):
         if not os.path.exists(SHCI.scratchDirectory):
@@ -1043,7 +1061,7 @@ def writeSHCIConfFile(SHCI, nelec, Restart):
         f.write('DoRDM\n')
     for line in SHCI.extraline:
         f.write('%s\n' % line)
-
+        
     f.write('\n')  # SHCI requires that there is an extra line.
     f.close()
 
@@ -1171,7 +1189,6 @@ def writeIntegralFile(SHCI, h1eff, eri_cas, norb, nelec, ecore=0):
         os.makedirs(SHCI.scratchDirectory)
 
     from pyscf import symm
-    from pyscf.dmrgscf import dmrg_sym
 
     if (SHCI.groupname == 'Dooh'
             or SHCI.groupname == 'Coov') and SHCI.useExtraSymm:
@@ -1200,6 +1217,7 @@ def writeIntegralFile(SHCI, h1eff, eri_cas, norb, nelec, ecore=0):
 
     else:
         if SHCI.groupname is not None and SHCI.orbsym is not []:
+            from pyscf.dmrgscf import dmrg_sym
             orbsym = dmrg_sym.convert_orbsym(SHCI.groupname, SHCI.orbsym)
         else:
             orbsym = [1] * norb

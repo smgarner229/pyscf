@@ -42,12 +42,17 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
     eris = casscf.ao2mo(mo)
     #print 'ci0', ci0
     if os.environ.get("cycle") is not None:
+        #if (int(os.environ["cycle"])+1) == 1:
+        #    conv_tol_grad = 5e-03
+        #    tol = 5e-04
+        #    logger.info(casscf, 'Lan sets conv_tol to %g', tol)
+        #    logger.info(casscf, 'Lan sets conv_tol_grad to %g', conv_tol_grad)
         if (int(os.environ["cycle"])+1) > 1:
             rdm1_pregeom_AO = addons.make_rdm12(casscf, mo, ci0) #, rdm2Target_AO
             #print "rdm1_pregeom_AO"
             #print rdm1_pregeom_AO
     e_tot, e_cas, fcivec = casscf.casci(mo, ci0, eris, log, locals())    
-    if casscf.ncas == nmo and not casscf.internal_rotation:
+    if (casscf.ncas == nmo and not casscf.internal_rotation) or casscf.sa_geom_opt:
         if casscf.canonicalization:
             log.debug('CASSCF canonicalization')
             mo, fcivec, mo_energy = casscf.canonicalize(mo, fcivec, eris,
@@ -56,7 +61,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
         else:
             mo_energy = None
         return True, e_tot, e_cas, fcivec, mo, mo_energy
-
+    
     if conv_tol_grad is None:
         conv_tol_grad = numpy.sqrt(tol)
         logger.info(casscf, 'Set conv_tol_grad to %g', conv_tol_grad)
@@ -79,7 +84,10 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
         t3m = t2m
         omega = e_tot
         casdm1_old = casdm1
+        #print "fcivec", fcivec
         casdm1, casdm2 = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
+        print "casdm1 casdm1"
+        print casdm1
         norm_ddm = numpy.linalg.norm(casdm1 - casdm1_old)
         t3m = log.timer('update CAS DM', *t3m)
         max_cycle_micro = casscf.micro_cycle_scheduler(locals())
@@ -205,7 +213,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
         casscf.dump_chk(locals())
 
     log.timer('2-step CASSCF', *cput0)
-    print "fcivec", fcivec
+    #print "fcivec", fcivec
     return conv, e_tot, e_cas, fcivec, mo, mo_energy
 
 

@@ -509,8 +509,8 @@ def make_rdm12(casscf, mo_coeff=None, ci=None):
     ncas = casscf.ncas
     ncore = casscf.ncore
     nmo = mo_coeff.shape[1]
-    print "civector"
-    print ci
+    #print "civector"
+    #print ci
     casdm1, casdm2 = casscf.fcisolver.make_rdm12(ci, ncas, nelecas)
     rdm1, rdm2 = _make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, nmo)
     rdm1 = reduce(numpy.dot, (mo_coeff, rdm1, mo_coeff.T))

@@ -869,6 +869,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
         return self.e_tot, self.e_cas, self.ci, self.mo_coeff, self.mo_energy
 
     def _finalize(self):
+        #print "test ", self.e_tot, self.e_cas
         log = logger.Logger(self.stdout, self.verbose)
         if log.verbose >= logger.NOTE and getattr(self.fcisolver, 'spin_square', None):
             if isinstance(self.e_cas, (float, numpy.number)):
@@ -961,13 +962,16 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                   ncore=None, **kwargs):
         '''One-particle density matrix in AO representation
         '''
+        print "we are here making RDM1"
+        
         if mo_coeff is None: mo_coeff = self.mo_coeff
         if ci is None: ci = self.ci
         if ncas is None: ncas = self.ncas
         if nelecas is None: nelecas = self.nelecas
         if ncore is None: ncore = self.ncore
-
+        
         casdm1 = self.fcisolver.make_rdm1(ci, ncas, nelecas)
+        print casdm1
         mocore = mo_coeff[:,:ncore]
         mocas = mo_coeff[:,ncore:ncore+ncas]
         dm1 = numpy.dot(mocore, mocore.T) * 2
