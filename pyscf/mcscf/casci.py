@@ -962,7 +962,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                   ncore=None, **kwargs):
         '''One-particle density matrix in AO representation
         '''
-        print "we are here making RDM1"
+        #print "we are here making RDM1"
         
         if mo_coeff is None: mo_coeff = self.mo_coeff
         if ci is None: ci = self.ci
@@ -971,7 +971,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
         if ncore is None: ncore = self.ncore
         
         casdm1 = self.fcisolver.make_rdm1(ci, ncas, nelecas)
-        print casdm1
+        #print casdm1
         mocore = mo_coeff[:,:ncore]
         mocas = mo_coeff[:,ncore:ncore+ncas]
         dm1 = numpy.dot(mocore, mocore.T) * 2
