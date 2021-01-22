@@ -1180,8 +1180,8 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=1e-03,
         t3m = t2m = t1m = log.timer('macro iter %d'%imacro, *t1m)
 
         de, elast = e_tot - elast, e_tot
-        print "AAAAAAAAAAAA ", tol, conv_tol_grad, conv_tol_ddm
-        print "BBBBBBBBBBBB ", abs(de), norm_gorb0, norm_ddm
+        #print "AAAAAAAAAAAA ", tol, conv_tol_grad, conv_tol_ddm
+        #print "BBBBBBBBBBBB ", abs(de), norm_gorb0, norm_ddm
         if (abs(de) < tol
             and (norm_gorb0 < conv_tol_grad and norm_ddm < conv_tol_ddm)):
             conv = True
