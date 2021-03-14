@@ -22,6 +22,7 @@ import time
 from functools import reduce
 import copy
 import numpy
+import scipy.linalg
 from pyscf import gto
 from pyscf import lib
 from pyscf.lib import logger
@@ -47,15 +48,20 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
     #if eris is None: eris = mp.ao2mo(mo_coeff)
 
+    nuc = mp._scf.energy_nuc()
+    ene_hf = mp._scf.energy_tot()
+
     #initializing w/ HF
     mo_coeff  = mp._scf.mo_coeff
     mo_energy = mp._scf.mo_energy
 
-    nmo = mp.nmo
+    nmo  = mp.nmo
     nocc = mp.nocc
     nvir = mp.nmo - nocc
 
-    niter = 1
+    niter = 100
+    ene_old = 0.
+    thres = 1e-8
     for it in range(niter):
 
         h2mo = ao2mo.kernel(mp.mol, mo_coeff, compact=False)
@@ -66,14 +72,12 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         #####################
         ### Hartree-Fock
 
-        fock_hf = numpy.zeros((nmo,nmo), dtype=h1mo.dtype)
+        fock_hf = h1mo
 
         for p in range(nmo):
             for q in range(nmo):
-                fock_hf[p,q] = h1mo[p,q]
                 for k in range(nocc):
                     fock_hf[p,q] += 2.*h2mo[p,q,k,k] - h2mo[p,k,k,q]
-                    #print(fock)
 
         fock = fock_hf
 
@@ -82,10 +86,6 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         for i in range(nocc):
             for j in range(nocc):
                 c0 -= 2.*h2mo[i,i,j,j] - h2mo[i,j,i,j]
-        ene_hf = c0
-        for i in range(nocc):
-            ene_hf += 2.*fock[i,i]
-
 
         #####################
         ### MP1 amplitude
@@ -119,29 +119,20 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                         A = a+nocc
                         B = b+nocc
                         c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b]
-                        #=0#c1[j,B] += 4. * h1mo[i,A] * tmp1_bar[i,a,j,b]
-                        #=0#for k in range(nocc):
-                        #=0#    c1[j,B] += 4. * (2. * h2mo[i,A,k,k] - h2mo[i,k,k,A]) * tmp1_bar[i,a,j,b]
+                        c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
                         for p in range(nmo):
-                            c1[j,p] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
-                            c1[B,p] -= 4. * h2mo[i,A,p,p] *  tmp1_bar[i,a,j,b]
+                            c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
+                            c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
         # symmetrize c1
         for p in range(nmo):
             for q in range(nmo):
                 fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
 
-        # evaluate energy
-        ene = c0
-        for i in range(nocc):
-            ene += 2. * fock[i,i]
-        #print("energy ", ene)
-        #return ene - ene_hf
-        
         #####################
         ### BCH 2nd order  
 
         c1 = numpy.zeros((nmo,nmo), dtype=fock.dtype)
-
+        
         #[1]
         y1 = numpy.zeros((nocc,nvir), dtype=fock.dtype)
         for i in range(nocc):
@@ -166,7 +157,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                         for b in range(nvir):
                             A = a+nocc
                             C = c+nocc
-                            y1[i,a,j,b] += tmp1_bar[i,c,j,b] * fock_hf[A,C]
+                            y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
         for k in range(nocc):
             for i in range(nocc):
                 for a in range(nvir):
@@ -187,7 +178,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                 for j in range(nocc):
                     for b in range(nvir):
                         c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-
+        
         # [6] [7] [4] [10]
         y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
         for i in range(nocc):
@@ -217,7 +208,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                 for j in range(nocc):
                     for b in range(nvir):
                         c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-
+        
         #[5]
         y1 = numpy.zeros((nocc,nocc), dtype=fock.dtype)
         for k in range(nocc):
@@ -230,7 +221,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
             for i in range(nocc):
                 for p in range(nmo):
                     c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
-
+        
         #[9]
         y1 = numpy.zeros((nvir,nvir), dtype=fock.dtype)
         for c in range(nvir): 
@@ -245,7 +236,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                     A = a+nocc
                     C = c+nocc
                     c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
-
+        
         # symmetrize c1
         for p in range(nmo):
             for q in range(nmo):
@@ -254,11 +245,75 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene = c0
         for i in range(nocc):
             ene += 2. * fock[i,i]
+        
+        ene_tot = ene + nuc
+        de = abs(ene_tot - ene_old)
+        ene_old = ene_tot
+        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de)
 
-        print("energy ", ene)
-        e_corr = ene - ene_hf
+        if de < thres:
+            break
+
+        ## diagonalizing correlated Fock 
+        mo_energy, U = scipy.linalg.eigh(fock)
+        mo_coeff = numpy.matmul(mo_coeff, U)
+        print("mo_energy =")
+        print(mo_energy)
 
         
+
+    ## evaluating IPs and EAs
+    ip_obmp2 = []
+    for h in range(nocc):
+        tmp2 = 0.
+        for i in range(nocc-1):
+            for j in range(nocc-1):
+                for a in range(nvir):
+                    A = a+nocc
+                    if i != h and j != h:
+                        tmp2 +=  tmp1_bar[i,a,j,h] * h2mo[i,A,j,h]
+
+        ip_obmp2.append(27.2114*(-mo_energy[h] + 2.*tmp2))
+
+
+    tmp1_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=fock_hf.dtype)
+    for i in range(nocc):
+        for a in range(nvir):
+            for l in range(nvir):
+                for b in range(nvir):
+                    A = a+nocc
+                    B = b+nocc
+                    L = l+nocc
+                    x = mo_energy[i] + mo_energy[L] - mo_energy[A] - mo_energy[B]
+                    tmp1_new[i,a,l,b] = 1. * h2mo[i,A,L,B]/x
+                    
+    tmp1_bar_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=tmp1.dtype)
+    for i in range(nocc):
+        for a in range(nvir):
+            for l in range(nvir):
+                for b in range(nvir):
+                    tmp1_bar_new[i,a,l,b] = tmp1_new[i,a,l,b] - 0.5 * tmp1_new[i,b,l,a]
+                    
+    ea_obmp2 = []
+    for l in range(nvir):
+        L = l+nocc
+        tmp2 = 0.
+        for a in range(nvir):
+            for b in range(nvir):
+                for i in range(nocc):
+                    A = a+nocc
+                    B = b+nocc
+                    if a != l and b != l:
+                        tmp2 +=  tmp1_bar_new[i,a,l,b] * h2mo[i,A,L,B]
+
+        ea_obmp2.append(27.2114*(-mo_energy[L] - 2.*tmp2))
+    
+    print("ip_obmp2 (in eV)")
+    print(ip_obmp2)
+    print("ea_obmp2 (in eV)")
+    print(ea_obmp2)
+
+    e_corr = ene_tot - ene_hf
 
     return e_corr
 
