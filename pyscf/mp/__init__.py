@@ -21,6 +21,7 @@ from pyscf.mp import mp2
 from pyscf.mp import dfmp2
 from pyscf.mp import ump2
 from pyscf.mp import gmp2
+from pyscf.mp import obmp2
 
 def MP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
     __doc__ = mp2.MP2.__doc__
@@ -75,3 +76,11 @@ def GMP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
     else:
         return gmp2.GMP2(mf, frozen, mo_coeff, mo_occ)
 
+def OBMP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
+    __doc__ = obmp2.OBMP2.__doc__
+    if isinstance(mf, scf.rhf.RHF):
+        return obmp2.OBMP2(mf, frozen, mo_coeff, mo_occ)
+    #elif isinstance(mf, scf.ghf.GHF):
+    #    return GMP2(mf, frozen, mo_coeff, mo_occ)
+    #else:
+    #    return RMP2(mf, frozen, mo_coeff, mo_occ)
