@@ -33,7 +33,7 @@ from pyscf import __config__
 WITH_T2 = getattr(__config__, 'mp_mp2_with_t2', True)
 
 
-def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
+def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
            verbose=logger.NOTE):
     if mo_energy is None or mo_coeff is None:
         if mp.mo_energy is None or mp.mo_coeff is None:
@@ -59,13 +59,21 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     nocc = mp.nocc
     nvir = mp.nmo - nocc
 
-    niter = 100
+    niter = mp.niter
     ene_old = 0.
-    thres = 1e-8
+    eri_ao = mp.mol.intor('int2e_sph')
+
+    #exit()
+    print("shift = ", mp.shift)
+    print ("thresh = ", mp.thresh)
+
     for it in range(niter):
 
-        h2mo = ao2mo.kernel(mp.mol, mo_coeff, compact=False)
-        h2mo = numpy.reshape(h2mo, (nmo, nmo, nmo, nmo))
+#        h2mo = ao2mo.kernel(mp.mol, mo_coeff, compact=False)
+#        h2mo = numpy.reshape(h2mo, (nmo, nmo, nmo, nmo))
+        h2mo = int_transform(eri_ao, mo_coeff)
+        h2mo_2 = int_transform(eri_ao, mo_coeff)
+        h2mo_3 = int_transform(eri_ao, mo_coeff)
         h1ao = mp._scf.get_hcore(mp.mol)
         h1mo = numpy.matmul(mo_coeff.T,numpy.matmul(h1ao,mo_coeff))
         
@@ -81,11 +89,22 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
         fock = fock_hf
 
+        #print(fock)
+
         c0 = 0.
         e_corr = 0.
         for i in range(nocc):
             for j in range(nocc):
-                c0 -= 2.*h2mo[i,i,j,j] - h2mo[i,j,i,j]
+                c0 -= 2.*h2mo[i,i,j,j] - h2mo[i,j,j,i]
+        #print("c0 ", c0)
+        #test_ene = c0
+        #for i in range(nocc):
+        #    test_ene += 2. * fock[i,i] 
+        #print("test_ene ", test_ene)
+        #exit()
+
+        if  mp.second_order:
+            mp.ampf = 1.0
 
         #####################
         ### MP1 amplitude
@@ -97,8 +116,8 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                     for b in range(nvir):
                         A = a+nocc
                         B = b+nocc
-                        x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B]
-                        tmp1[i,a,j,b] = 1. * h2mo[i,A,j,B]/x
+                        x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
+                        tmp1[i,a,j,b] = mp.ampf * h2mo[i,A,j,B]/x
 
         tmp1_bar = numpy.zeros((nocc,nvir,nocc,nvir), dtype=tmp1.dtype)
         for i in range(nocc):
@@ -127,120 +146,129 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         for p in range(nmo):
             for q in range(nmo):
                 fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
+        
+        #print("fock")
+        #print(fock)
+        #print("c0 ", c0)
+        #exit()
 
         #####################
         ### BCH 2nd order  
+        
+        if mp.second_order:
 
-        c1 = numpy.zeros((nmo,nmo), dtype=fock.dtype)
-        
-        #[1]
-        y1 = numpy.zeros((nocc,nvir), dtype=fock.dtype)
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        A = a+nocc
-                        y1[j,b] += fock_hf[i,A] * tmp1_bar[i,a,j,b]
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        A = a+nocc
-                        c1[i,A] += 4. * y1[j,b] * tmp1_bar[i,a,j,b]
-                        
-        #[2] [3] [8] [11]
-        y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
-        for c in range(nvir): 
+            c1 = numpy.zeros((nmo,nmo), dtype=fock.dtype)
+           
+            #[1]
+            y1 = numpy.zeros((nocc,nvir), dtype=fock.dtype)
             for i in range(nocc):
                 for a in range(nvir):
                     for j in range(nocc):
                         for b in range(nvir):
                             A = a+nocc
-                            C = c+nocc
-                            y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
-        for k in range(nocc):
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            c1[j,k] += 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-                            c1[i,k] += 2. * tmp1[i,a,j,b] * y1[k,a,j,b]
-        for c in range(nvir): 
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            B = b+nocc
-                            C = c+nocc
-                            c1[B,C] -= 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-        
-        # [6] [7] [4] [10]
-        y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        for k in range(nocc):
-                            y1[i,a,j,b] += fock_hf[i,k] * tmp1_bar[k,a,j,b]
-        for c in range(nvir): 
+                            y1[j,b] += fock_hf[i,A] * tmp1_bar[i,a,j,b]
             for i in range(nocc):
                 for a in range(nvir):
                     for j in range(nocc):
                         for b in range(nvir):
                             A = a+nocc
-                            B = b+nocc
-                            C = c+nocc
-                            c1[B,C] += 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-                            c1[A,C] += 2. * tmp1[i,a,j,b] * y1[i,c,j,b]
-        for k in range(nocc):
+                            c1[i,A] += 4. * y1[j,b] * tmp1_bar[i,a,j,b]
+    
+            #[2] [3] [8] [11]
+            y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
+            for j in range(nocc):
+                for c in range(nvir): 
+                    for i in range(nocc):
+                        for a in range(nvir):
+                            for b in range(nvir):
+                                A = a+nocc
+                                C = c+nocc
+                                y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
+            for k in range(nocc):
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for b in range(nvir):
+                                c1[j,k] += 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
+                                c1[i,k] += 2. * tmp1[i,a,j,b] * y1[k,a,j,b]
+    
             for i in range(nocc):
                 for a in range(nvir):
                     for j in range(nocc):
                         for b in range(nvir):
-                            c1[j,k] -= 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-        
-        #[5]
-        y1 = numpy.zeros((nocc,nocc), dtype=fock.dtype)
-        for k in range(nocc):
+                            for c in range(nvir): 
+                                B = b+nocc
+                                C = c+nocc
+                                c1[B,C] -= 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
             for i in range(nocc):
                 for a in range(nvir):
                     for j in range(nocc):
                         for b in range(nvir):
-                            y1[i,k] += tmp1[i,a,j,b]  * tmp1_bar[k,a,j,b]
-        for k in range(nocc):
-            for i in range(nocc):
-                for p in range(nmo):
-                    c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
-        
-        #[9]
-        y1 = numpy.zeros((nvir,nvir), dtype=fock.dtype)
-        for c in range(nvir): 
+                            c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
+            
+            # [6] [7] [4] [10]
+            y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
+            for b in range(nvir):
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for k in range(nocc):
+                                y1[i,a,j,b] += fock_hf[i,k] * tmp1_bar[k,a,j,b]
+            for c in range(nvir): 
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for b in range(nvir):
+                                A = a+nocc
+                                B = b+nocc
+                                C = c+nocc
+                                c1[B,C] += 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
+                                c1[A,C] += 2. * tmp1[i,a,j,b] * y1[i,c,j,b]
+            for k in range(nocc):
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for b in range(nvir):
+                                c1[j,k] -= 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
+    
             for i in range(nocc):
                 for a in range(nvir):
                     for j in range(nocc):
                         for b in range(nvir):
-                            y1[a,c] += tmp1[i,a,j,b] * tmp1_bar[i,c,j,b]
-        for c in range(nvir): 
-            for a in range(nvir):
-                for p in range(nmo):
-                    A = a+nocc
-                    C = c+nocc
-                    c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
-        
-        # symmetrize c1
-        for p in range(nmo):
-            for q in range(nmo):
-                fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
+                            c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
+            
+            #[5]
+            y1 = numpy.zeros((nocc,nocc), dtype=fock.dtype)
+            for k in range(nocc):
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for b in range(nvir):
+                                y1[i,k] += tmp1[i,a,j,b]  * tmp1_bar[k,a,j,b]
+            for k in range(nocc):
+                for i in range(nocc):
+                    for p in range(nmo):
+                        c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
+            
+            #[9]
+            y1 = numpy.zeros((nvir,nvir), dtype=fock.dtype)
+            for c in range(nvir): 
+                for i in range(nocc):
+                    for a in range(nvir):
+                        for j in range(nocc):
+                            for b in range(nvir):
+                                y1[a,c] += tmp1[i,a,j,b] * tmp1_bar[i,c,j,b]
+            for c in range(nvir): 
+                for a in range(nvir):
+                    for p in range(nmo):
+                        A = a+nocc
+                        C = c+nocc
+                        c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
+            
+            # symmetrize c1
+            for p in range(nmo):
+                for q in range(nmo):
+                    fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
 
         ene = c0
         for i in range(nocc):
@@ -249,75 +277,91 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene_tot = ene + nuc
         de = abs(ene_tot - ene_old)
         ene_old = ene_tot
-        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de)
+        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de, flush=True)
 
-        if de < thres:
+        if de < mp.thresh:
             break
 
         ## diagonalizing correlated Fock 
         mo_energy, U = scipy.linalg.eigh(fock)
         mo_coeff = numpy.matmul(mo_coeff, U)
-        print("mo_energy =")
-        print(mo_energy)
+        #t2 = tmp1
+
+    #print("mo_energy =", flush=True)
+    #print(mo_energy, flush=True)
 
         
 
-    ## evaluating IPs and EAs
-    ip_obmp2 = []
-    for h in range(nocc):
-        tmp2 = 0.
-        for i in range(nocc-1):
-            for j in range(nocc-1):
-                for a in range(nvir):
-                    A = a+nocc
-                    if i != h and j != h:
-                        tmp2 +=  tmp1_bar[i,a,j,h] * h2mo[i,A,j,h]
+    ### evaluating IPs and EAs
+    #ip_obmp2 = []
+    #for h in range(nocc):
+    #    tmp2 = 0.
+    #    for i in range(nocc-1):
+    #        for j in range(nocc-1):
+    #            for a in range(nvir):
+    #                A = a+nocc
+    #                if i != h and j != h:
+    #                    tmp2 +=  tmp1_bar[i,a,j,h] * h2mo[i,A,j,h]
+    #
+    #    ip_obmp2.append(27.2114*(-mo_energy[h] + 2.*tmp2))
+    #
+    #
+    #tmp1_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=fock_hf.dtype)
+    #for i in range(nocc):
+    #    for a in range(nvir):
+    #        for l in range(nvir):
+    #            for b in range(nvir):
+    #                A = a+nocc
+    #                B = b+nocc
+    #                L = l+nocc
+    #                x = mo_energy[i] + mo_energy[L] - mo_energy[A] - mo_energy[B]
+    #                tmp1_new[i,a,l,b] = 1. * h2mo[i,A,L,B]/x
+    #                
+    #tmp1_bar_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=tmp1.dtype)
+    #for i in range(nocc):
+    #    for a in range(nvir):
+    #        for l in range(nvir):
+    #            for b in range(nvir):
+    #                tmp1_bar_new[i,a,l,b] = tmp1_new[i,a,l,b] - 0.5 * tmp1_new[i,b,l,a]
+    #                
+    #ea_obmp2 = []
+    #for l in range(nvir):
+    #    L = l+nocc
+    #    tmp2 = 0.
+    #    for a in range(nvir):
+    #        for b in range(nvir):
+    #            for i in range(nocc):
+    #                A = a+nocc
+    #                B = b+nocc
+    #                if a != l and b != l:
+    #                    tmp2 +=  tmp1_bar_new[i,a,l,b] * h2mo[i,A,L,B]
+    #
+    #    ea_obmp2.append(27.2114*(-mo_energy[L] - 2.*tmp2))
+    #
+    ##print("ip_obmp2 (in eV)", flush=True)
+    ##print(ip_obmp2[nocc-1], flush=True)
+    #print("ea_obmp2 (in eV)", flush=True)
+    #print(ea_obmp2, flush=True)
 
-        ip_obmp2.append(27.2114*(-mo_energy[h] + 2.*tmp2))
-
-
-    tmp1_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=fock_hf.dtype)
-    for i in range(nocc):
-        for a in range(nvir):
-            for l in range(nvir):
-                for b in range(nvir):
-                    A = a+nocc
-                    B = b+nocc
-                    L = l+nocc
-                    x = mo_energy[i] + mo_energy[L] - mo_energy[A] - mo_energy[B]
-                    tmp1_new[i,a,l,b] = 1. * h2mo[i,A,L,B]/x
-                    
-    tmp1_bar_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=tmp1.dtype)
-    for i in range(nocc):
-        for a in range(nvir):
-            for l in range(nvir):
-                for b in range(nvir):
-                    tmp1_bar_new[i,a,l,b] = tmp1_new[i,a,l,b] - 0.5 * tmp1_new[i,b,l,a]
-                    
-    ea_obmp2 = []
-    for l in range(nvir):
-        L = l+nocc
-        tmp2 = 0.
-        for a in range(nvir):
-            for b in range(nvir):
-                for i in range(nocc):
-                    A = a+nocc
-                    B = b+nocc
-                    if a != l and b != l:
-                        tmp2 +=  tmp1_bar_new[i,a,l,b] * h2mo[i,A,L,B]
-
-        ea_obmp2.append(27.2114*(-mo_energy[L] - 2.*tmp2))
-    
-    print("ip_obmp2 (in eV)")
-    print(ip_obmp2)
-    print("ea_obmp2 (in eV)")
-    print(ea_obmp2)
-
+    mp.mo_energy = mo_energy
+    mp.mo_coeff  = mo_coeff
+    #mp.t2        = tmp1
     e_corr = ene_tot - ene_hf
 
     return e_corr
 
-def make_rdm1(mp, t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
+def int_transform(eri_ao, mo_coeff):
+    nao = mo_coeff.shape[0]
+    nmo = mo_coeff.shape[1]
+    eri_mo = numpy.dot(mo_coeff.T, eri_ao.reshape(nao,-1))
+    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
+    eri_mo = eri_mo.reshape(nmo,nao,nao,nmo).transpose(1,0,3,2)
+    eri_mo = numpy.dot(mo_coeff.T, eri_mo.reshape(nao,-1))
+    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
+    eri_mo = eri_mo.reshape(nmo,nmo,nmo,nmo)
+    return eri_mo
+
+def make_rdm1(mp): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
     '''Spin-traced one-particle density matrix.
     The occupied-virtual orbital response is not included.
 
@@ -333,13 +377,32 @@ def make_rdm1(mp, t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
             representation.
     '''
     from pyscf.cc import ccsd_rdm
+
+    nocc = mp.nocc
+    nvir = mp.nmo - nocc
+    eia = mp.mo_energy[:nocc,None] - mp.mo_energy[None,nocc:] 
+    eris = mp.ao2mo(mp.mo_coeff)
+
+    t2 = numpy.empty((nocc,nocc,nvir,nvir), dtype=eris.ovov.dtype)
+    for i in range(nocc):
+        if isinstance(eris.ovov, numpy.ndarray) and eris.ovov.ndim == 4:
+            # When mf._eri is a custom integrals wiht the shape (n,n,n,n), the
+            # ovov integrals might be in a 4-index tensor.
+            gi = eris.ovov[i]
+        else:
+            gi = numpy.asarray(eris.ovov[i*nvir:(i+1)*nvir])
+
+        gi = gi.reshape(nvir,nocc,nvir).transpose(1,0,2)
+        t2i = gi.conj()/lib.direct_sum('jb+a->jba', eia, eia[i])
+        t2[i] = t2i
+
     doo, dvv = _gamma1_intermediates(mp, t2, eris)
     nocc = doo.shape[0]
     nvir = dvv.shape[0]
     dov = numpy.zeros((nocc,nvir), dtype=doo.dtype)
     dvo = dov.T
     return ccsd_rdm._make_rdm1(mp, (doo, dov, dvo, dvv), with_frozen=True,
-                               ao_repr=ao_repr)
+                               ao_repr=False)
 
 def _gamma1_intermediates(mp, t2=None, eris=None):
     if t2 is None: t2 = mp.t2
@@ -371,76 +434,76 @@ def _gamma1_intermediates(mp, t2=None, eris=None):
     return -dm1occ, dm1vir
 
 
-def make_rdm2(mp, t2=None, eris=None, verbose=logger.NOTE):
-    r'''
-    Spin-traced two-particle density matrix in MO basis
-
-    dm2[p,q,r,s] = \sum_{sigma,tau} <p_sigma^\dagger r_tau^\dagger s_tau q_sigma>
-
-    Note the contraction between ERIs (in Chemist's notation) and rdm2 is
-    E = einsum('pqrs,pqrs', eri, rdm2)
-    '''
-    if t2 is None: t2 = mp.t2
-    nmo = nmo0 = mp.nmo
-    nocc = nocc0 = mp.nocc
-    nvir = nmo - nocc
-    if t2 is None:
-        if eris is None: eris = mp.ao2mo()
-        mo_energy = _mo_energy_without_core(mp, mp.mo_energy)
-        eia = mo_energy[:nocc,None] - mo_energy[None,nocc:]
-
-    if not (mp.frozen is 0 or mp.frozen is None):
-        nmo0 = mp.mo_occ.size
-        nocc0 = numpy.count_nonzero(mp.mo_occ > 0)
-        moidx = get_frozen_mask(mp)
-        oidx = numpy.where(moidx & (mp.mo_occ > 0))[0]
-        vidx = numpy.where(moidx & (mp.mo_occ ==0))[0]
-    else:
-        moidx = oidx = vidx = None
-
-    dm1 = make_rdm1(mp, t2, eris, verbose)
-    dm1[numpy.diag_indices(nocc0)] -= 2
-
-    dm2 = numpy.zeros((nmo0,nmo0,nmo0,nmo0), dtype=dm1.dtype) # Chemist notation
-    #dm2[:nocc,nocc:,:nocc,nocc:] = t2.transpose(0,3,1,2)*2 - t2.transpose(0,2,1,3)
-    #dm2[nocc:,:nocc,nocc:,:nocc] = t2.transpose(3,0,2,1)*2 - t2.transpose(2,0,3,1)
-    for i in range(nocc):
-        if t2 is None:
-            gi = numpy.asarray(eris.ovov[i*nvir:(i+1)*nvir])
-            gi = gi.reshape(nvir,nocc,nvir).transpose(1,0,2)
-            t2i = gi.conj()/lib.direct_sum('jb+a->jba', eia, eia[i])
-        else:
-            t2i = t2[i]
-        # dm2 was computed as dm2[p,q,r,s] = < p^\dagger r^\dagger s q > in the
-        # above. Transposing it so that it be contracted with ERIs (in Chemist's
-        # notation):
-        #   E = einsum('pqrs,pqrs', eri, rdm2)
-        dovov = t2i.transpose(1,0,2)*2 - t2i.transpose(2,0,1)
-        dovov *= 2
-        if moidx is None:
-            dm2[i,nocc:,:nocc,nocc:] = dovov
-            dm2[nocc:,i,nocc:,:nocc] = dovov.conj().transpose(0,2,1)
-        else:
-            dm2[oidx[i],vidx[:,None,None],oidx[:,None],vidx] = dovov
-            dm2[vidx[:,None,None],oidx[i],vidx[:,None],oidx] = dovov.conj().transpose(0,2,1)
-
-    # Be careful with convention of dm1 and dm2
-    #   dm1[q,p] = <p^\dagger q>
-    #   dm2[p,q,r,s] = < p^\dagger r^\dagger s q >
-    #   E = einsum('pq,qp', h1, dm1) + .5 * einsum('pqrs,pqrs', eri, dm2)
-    # When adding dm1 contribution, dm1 subscripts need to be flipped
-    for i in range(nocc0):
-        dm2[i,i,:,:] += dm1.T * 2
-        dm2[:,:,i,i] += dm1.T * 2
-        dm2[:,i,i,:] -= dm1.T
-        dm2[i,:,:,i] -= dm1
-
-    for i in range(nocc0):
-        for j in range(nocc0):
-            dm2[i,i,j,j] += 4
-            dm2[i,j,j,i] -= 2
-
-    return dm2#.transpose(1,0,3,2)
+#def make_rdm2(mp, t2=None, eris=None, verbose=logger.NOTE):
+#    r'''
+#    Spin-traced two-particle density matrix in MO basis
+#
+#    dm2[p,q,r,s] = \sum_{sigma,tau} <p_sigma^\dagger r_tau^\dagger s_tau q_sigma>
+#
+#    Note the contraction between ERIs (in Chemist's notation) and rdm2 is
+#    E = einsum('pqrs,pqrs', eri, rdm2)
+#    '''
+#    if t2 is None: t2 = mp.t2
+#    nmo = nmo0 = mp.nmo
+#    nocc = nocc0 = mp.nocc
+#    nvir = nmo - nocc
+#    if t2 is None:
+#        if eris is None: eris = mp.ao2mo()
+#        mo_energy = _mo_energy_without_core(mp, mp.mo_energy)
+#        eia = mo_energy[:nocc,None] - mo_energy[None,nocc:]
+#
+#    if not (mp.frozen is 0 or mp.frozen is None):
+#        nmo0 = mp.mo_occ.size
+#        nocc0 = numpy.count_nonzero(mp.mo_occ > 0)
+#        moidx = get_frozen_mask(mp)
+#        oidx = numpy.where(moidx & (mp.mo_occ > 0))[0]
+#        vidx = numpy.where(moidx & (mp.mo_occ ==0))[0]
+#    else:
+#        moidx = oidx = vidx = None
+#
+#    dm1 = make_rdm1(mp, t2, eris, verbose)
+#    dm1[numpy.diag_indices(nocc0)] -= 2
+#
+#    dm2 = numpy.zeros((nmo0,nmo0,nmo0,nmo0), dtype=dm1.dtype) # Chemist notation
+#    #dm2[:nocc,nocc:,:nocc,nocc:] = t2.transpose(0,3,1,2)*2 - t2.transpose(0,2,1,3)
+#    #dm2[nocc:,:nocc,nocc:,:nocc] = t2.transpose(3,0,2,1)*2 - t2.transpose(2,0,3,1)
+#    for i in range(nocc):
+#        if t2 is None:
+#            gi = numpy.asarray(eris.ovov[i*nvir:(i+1)*nvir])
+#            gi = gi.reshape(nvir,nocc,nvir).transpose(1,0,2)
+#            t2i = gi.conj()/lib.direct_sum('jb+a->jba', eia, eia[i])
+#        else:
+#            t2i = t2[i]
+#        # dm2 was computed as dm2[p,q,r,s] = < p^\dagger r^\dagger s q > in the
+#        # above. Transposing it so that it be contracted with ERIs (in Chemist's
+#        # notation):
+#        #   E = einsum('pqrs,pqrs', eri, rdm2)
+#        dovov = t2i.transpose(1,0,2)*2 - t2i.transpose(2,0,1)
+#        dovov *= 2
+#        if moidx is None:
+#            dm2[i,nocc:,:nocc,nocc:] = dovov
+#            dm2[nocc:,i,nocc:,:nocc] = dovov.conj().transpose(0,2,1)
+#        else:
+#            dm2[oidx[i],vidx[:,None,None],oidx[:,None],vidx] = dovov
+#            dm2[vidx[:,None,None],oidx[i],vidx[:,None],oidx] = dovov.conj().transpose(0,2,1)
+#
+#    # Be careful with convention of dm1 and dm2
+#    #   dm1[q,p] = <p^\dagger q>
+#    #   dm2[p,q,r,s] = < p^\dagger r^\dagger s q >
+#    #   E = einsum('pq,qp', h1, dm1) + .5 * einsum('pqrs,pqrs', eri, dm2)
+#    # When adding dm1 contribution, dm1 subscripts need to be flipped
+#    for i in range(nocc0):
+#        dm2[i,i,:,:] += dm1.T * 2
+#        dm2[:,:,i,i] += dm1.T * 2
+#        dm2[:,i,i,:] -= dm1.T
+#        dm2[i,:,:,i] -= dm1
+#
+#    for i in range(nocc0):
+#        for j in range(nocc0):
+#            dm2[i,i,j,j] += 4
+#            dm2[i,j,j,i] -= 2
+#
+#    return dm2#.transpose(1,0,3,2)
 
 
 def get_nocc(mp):
@@ -501,6 +564,9 @@ class OBMP2(lib.StreamObject):
         if mo_coeff  is None: mo_coeff  = mf.mo_coeff
         if mo_occ    is None: mo_occ    = mf.mo_occ
 
+        self.thresh = 1e-08
+        self.shift = 0.0
+        self.niter = 100
         self.mol = mf.mol
         self._scf = mf
         self.verbose = self.mol.verbose
@@ -508,6 +574,13 @@ class OBMP2(lib.StreamObject):
         self.max_memory = mf.max_memory
 
         self.frozen = frozen
+
+        self.mom = False
+        self.occ_exc = [None, None]
+        self.vir_exc = [None, None]
+
+        self.second_order = False
+        self.ampf = 0.5
 
 ##################################################
 # don't modify the following attributes, they are not input options
@@ -537,6 +610,7 @@ class OBMP2(lib.StreamObject):
     get_nocc = get_nocc
     get_nmo = get_nmo
     get_frozen_mask = get_frozen_mask
+    int_transform = int_transform
 
     def dump_flags(self, verbose=None):
         log = logger.new_logger(self, verbose)
@@ -557,7 +631,7 @@ class OBMP2(lib.StreamObject):
     def e_tot(self):
         return self.e_corr + self._scf.e_tot
 
-    def kernel(self, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
+    def kernel(self, shift=0.0, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                _kern=kernel):
         '''
         Args:
@@ -583,7 +657,7 @@ class OBMP2(lib.StreamObject):
         return _make_eris(self, mo_coeff, verbose=self.verbose)
 
     make_rdm1 = make_rdm1
-    make_rdm2 = make_rdm2
+    #make_rdm2 = make_rdm2
 
     #as_scanner = as_scanner
 
