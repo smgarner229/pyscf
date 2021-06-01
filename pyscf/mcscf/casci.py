@@ -269,6 +269,10 @@ def cas_natorb(mc, mo_coeff=None, ci=None, eris=None, sort=False,
     occ, ucas = mc._eig(-casdm1, ncore, nocc)
     if sort:
         casorb_idx = numpy.argsort(occ.round(9), kind='mergesort')
+        # Ensure the natural orbitals are in the same ordering pre-and post
+        # canonicalizing
+        where_natorb = mo_1to1map(ucas)
+        casorb_idx = where_natorb 
         occ = occ[casorb_idx]
         ucas = ucas[:,casorb_idx]
 
@@ -874,8 +878,16 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
         if log.verbose >= logger.NOTE and getattr(self.fcisolver, 'spin_square', None):
             if isinstance(self.e_cas, (float, numpy.number)):
                 ss = self.fcisolver.spin_square(self.ci, self.ncas, self.nelecas)
-                log.note('CASCI E = %.15g  E(CI) = %.15g  S^2 = %.7f',
+                # SHCI fci solver isn't quite perfect, just skip this finalize
+                # bit if we can't call it properly
+
+                
+                ss = ss[0]
+                try:
+                    log.note('CASCI E = %.15g  E(CI) = %.15g  S^2 = %.7f',
                          self.e_tot, self.e_cas, ss[0])
+                except:
+                    pass
             else:
                 for i, e in enumerate(self.e_cas):
                     ss = self.fcisolver.spin_square(self.ci[i], self.ncas, self.nelecas)
