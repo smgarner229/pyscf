@@ -664,8 +664,9 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
     #reading sCI information from output.dat
     civec = [] #dump variable for sCI
     config = [] # dump variable for sCI
+    spin_square_states = []
     if(casscf.is_use_sCI):
-        civec, config = read_sCI_output(ncas)
+        civec, config, spin_square_states = read_sCI_output(ncas)
         
     def eval_Hsqr(s):
         #wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(fcivec[s], fcivec[s].T)))
@@ -1808,13 +1809,14 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                         if envs['imacro'] > 0:
                             log.info('CASCI information')
                             if(self.is_use_sCI):
-                                civec, config = read_sCI_output(self.ncas)
+                                civec, config, spin_square_states = read_sCI_output(self.ncas)
 
                             for i in range(nroots):
                                 if not self.is_use_sCI:
                                     ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)[0]
                                 else:
                                     ss = extract_spin_state_sCI(i, civec, config)
+                                    ss = spin_square_states[i]
                                 log.info('CASCI state %d  E = %.15g S^2 = %.7f',
                                          i, e_tot[i], ss)
                             
@@ -1869,13 +1871,14 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     civec = [] #dump variable for sCI
                     config = [] # dump variable for sCI
                     if(self.is_use_sCI):
-                        civec, config = read_sCI_output(self.ncas)
+                        civec, config, spin_square_states = read_sCI_output(self.ncas)
 
                     for i in range(nroots):
                         if not self.is_use_sCI:
                             ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)[0]
                         else:
                             ss = extract_spin_state_sCI(i, civec, config)
+                            ss = spin_square_states[i]
                         log.info('CASCI state %d  E = %.15g S^2 = %.7f',
                                  i, e_tot[i], ss)
                     print()
@@ -1908,6 +1911,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                                 ss = self.fcisolver.spin_square(fcivec[s], self.ncas, self.nelecas)[0]
                             else:
                                 ss = extract_spin_state_sCI(s, civec, config)
+                                ss = spin_square_states[s]
 
                             casdm1, casdm2 = self.fcisolver.make_rdm12(fcivec[s], self.ncas, self.nelecas)
                             #casdm1 = self.fcisolver.make_rdm1(fcivec[s], self.ncas, self.nelecas)
