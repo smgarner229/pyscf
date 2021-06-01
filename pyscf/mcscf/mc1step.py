@@ -339,7 +339,7 @@ def lineSearch_naive(casscf, dr, fcivec, u, gorb_update):
     alpha_min = 1
     norm_gorb_min = norm_gorb
     alpha = 0
-    while alpha < 2:
+    while alpha < 3:
         u_new = casscf.update_rotate_matrix(alpha*dr, u)
         gorb = gorb_update(u_new, fcivec())    
         norm_gorb = numpy.linalg.norm(gorb)
