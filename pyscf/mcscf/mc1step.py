@@ -505,48 +505,125 @@ def rota_rdms(mo_coeff, rdm1_AO):
     return rdm1_MO
 
 def read_sCI_output(ncas):
+    """
+    Function to convert the sCI output into a form usable in the SS-CASSCF
+    INPUT:
+    ncas   --  number of electrons in the active space
+    OUTPUT:
+    civec  --  vector of vectors of coefficients for each state
+    config --  configurations associated with the above vectors
+    spin_square_vals -- list of spin square for the read in states
+    """
     file1 = open('output.dat', 'r')
     Lines = file1.readlines()
+    #LANS / OLDER VERSION OF EXTRACTING THE CI VECTOR FROM DICE 
+    #
+    #count = 0
+    #save_line = []
+    #state_list = []
+    #k = 0
+    #list_len_civec = []
+    #for line in Lines: 
+    #    save_line.append(line.strip())
+    #    if line.strip()[0:5] == 'State':
+    #        if line.strip()[10] != "0": 
+    #            list_len_civec.append(k-1)
+    #        k = 0
+    #
+    #    if  line.strip()[0:9]  == "Returning" or line.strip()[0:12]  == "PERTURBATION":
+    #        list_len_civec.append(k-4)                        
+    #    k += 1
+    #
+    #i = 0
+    #civec = []
+    #config = []
+    #while i < len(save_line):
+    #    if save_line[i][0:5] == "State":
+    #        istate = int(save_line[i][10])
+    #        len_civec = list_len_civec[istate]
+    #        civec_istate = []
+    #        config_istate = []
+    #        for j in xrange(len_civec):
+    #            civec_istate.append(float(save_line[i+j+1][7:19]))
+    #            tmp_ = []
+    #            l = 0
+    #            for k in xrange(ncas):
+    #                l = 22+2*k
+    #                tmp_.append(save_line[i+j+1][l])
+    #            config_istate.append(tmp_)
+    #        civec.append(civec_istate)
+    #        config.append(config_istate)
+    #    i += 1
+    #    
+    #return civec, config
     
-    count = 0
-    save_line = []
-    state_list = []
-    k = 0
-    list_len_civec = []
-    for line in Lines: 
-        save_line.append(line.strip())
-        if line.strip()[0:5] == 'State':
-            if line.strip()[10] != "0": 
-                list_len_civec.append(k-1)
-            k = 0
-    
-        if  line.strip()[0:9]  == "Returning" or line.strip()[0:12]  == "PERTURBATION":
-            list_len_civec.append(k-4)                        
-        k += 1
-    
-    i = 0
-    civec = []
-    config = []
-    while i < len(save_line):
-        if save_line[i][0:5] == "State":
-            istate = int(save_line[i][10])
-            len_civec = list_len_civec[istate]
-            civec_istate = []
-            config_istate = []
-            for j in xrange(len_civec):
-                civec_istate.append(float(save_line[i+j+1][7:19]))
-                tmp_ = []
-                l = 0
-                for k in xrange(ncas):
-                    l = 22+2*k
-                    tmp_.append(save_line[i+j+1][l])
-                config_istate.append(tmp_)
-            civec.append(civec_istate)
-            config.append(config_istate)
-        i += 1
-        
-    return civec, config
+    save_line_flag=False 
+    save_lines=[]
+  
+    # intermediate step, we need the length of each CI vector for how we read
+    # them in the next step
+    ndets=0
+    len_ci_vecs=[]
+    spin_square_vals=[]
+   
+    #Set the number of determinants in the CI vector for each state
+    for line in Lines:
+        # We'll parse here and only use the shorter saved lines later
+        if save_line_flag:
+            save_lines.append(line.strip())
+        # The line contains the state label
+        if 'State' in line:
+            spin_square_vals.append(float(line.split()[6]))
+            #print("spin square for this one was:")
+            #print(spin_square_vals)
+            # If it's not the first state, store the length of the state
+            #if line[len(line)-1]!='0':
+            if "State : 0" not in line:
+                #print("Not the first state")
+                len_ci_vecs.append(ndets-1)
+            # It is the first state, so let's start saving lines
+            else:
+                save_lines.append(line.strip())
+                save_line_flag=True
+            # Reset the counter since we've found a new state
+            ndets=0
+        # End of the printed states, save the length of last state and exit this
+        # loop to stop saving further lines
+        if "PERTURBATION" in line:
+            len_ci_vecs.append(ndets-4)
+            break
+        # incriment the counter for number of dets in a state
+        ndets+=1
+    #print("Found " + str(len(len_ci_vecs)) + " dets with lengths:")
+    #print(len_ci_vecs)
 
+    # Read & save the states.     
+    all_ci_vectors=[]
+    all_ci_coeffs=[]
+    i=0
+    while i < len(save_lines):
+        if 'State' in save_lines[i]:
+            # Get the state index
+            state_index=int(save_lines[i][len(save_lines[i])-1]) 
+            # Set the number of lines to expect
+            ci_vec_ndets=len_ci_vecs[state_index]
+            # Empty lists to hold the read coefficients
+            state_ci_coeffs=[]
+            state_ci_vecs=[]
+            for j in range(ci_vec_ndets):
+                # Stores the coefficient and the remainder of the active space
+                # vector into it's own list
+                #print(save_lines[i+j+1]) 
+                state_ci_coeffs.append(float((save_lines[i+j+1].split())[1]))
+                state_ci_vecs.append(save_lines[i+j+1].split()[2:])
+            all_ci_coeffs.append(state_ci_coeffs)
+            all_ci_vectors.append(state_ci_vecs)
+        # Not the most efficient way to do this, but it is just counting so.....
+        i+=1
+
+    return all_ci_coeffs, all_ci_vectors, spin_square_vals
+
+ 
 def extract_spin_state_sCI(istate, civec, config):
     spin_istate = 0.0
     tmp_ = config[istate][0]
