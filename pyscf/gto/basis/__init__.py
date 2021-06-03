@@ -189,6 +189,8 @@ ALIAS = {
     'augccpv5zmp2fit': 'aug-cc-pV5Z_MP2FIT.dat',
     'augccpcvtz'    : ('aug-cc-pvtz.dat','cc-pCVTZ.dat'),
     'gamessaugccpcvtz' : 'gamess_augccpcvtz.dat',
+    'gamessaugspccpcvtz' : 'gamess_augSPccpcvtz.dat',
+    'gamessaugspccpvtz' : 'gamess_augSPccpvtz.dat',
     'ccpcvdz'    : ('cc-pvdz.dat', 'cc-pCVDZ.dat'),
     'ccpcvtz'    : ('cc-pvtz.dat', 'cc-pCVTZ.dat'),
     'ccpcvqz'    : ('cc-pvqz.dat', 'cc-pCVQZ.dat'),
