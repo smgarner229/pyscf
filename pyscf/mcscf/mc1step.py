@@ -690,6 +690,9 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
             ss = casscf.fcisolver.spin_square(fcivec[s], ncas, casscf.nelecas)[0]
         else:
             ss = extract_spin_state_sCI(s, civec, config)
+            # Pick out of the read in spin square options to go after the right
+            # spin state
+            ss = spin_square_states[s]
         casdm1, casdm2 = casscf.fcisolver.make_rdm12(fcivec[s], ncas, casscf.nelecas)
         rdm1_MO, rdm2_MO = addons._make_rdm12_on_mo(casdm1, casdm2, ncore, ncas, norb)
 
