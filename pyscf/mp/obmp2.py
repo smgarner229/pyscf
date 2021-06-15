@@ -46,14 +46,8 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         # not supported when mo_energy or mo_coeff is given.
         assert(mp.frozen is 0 or mp.frozen is None)
 
-    #if eris is None: eris = mp.ao2mo(mo_coeff)
-
     nuc = mp._scf.energy_nuc()
     ene_hf = mp._scf.energy_tot()
-
-    #initializing w/ HF
-    mo_coeff  = mp._scf.mo_coeff
-    mo_energy = mp._scf.mo_energy
 
     nmo  = mp.nmo
     nocc = mp.nocc
@@ -63,19 +57,18 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     ene_old = 0.
     eri_ao = mp.mol.intor('int2e_sph')
 
-    #exit()
+    print()
     print("shift = ", mp.shift)
     print ("thresh = ", mp.thresh)
+    print()
 
     for it in range(niter):
 
-#        h2mo = ao2mo.kernel(mp.mol, mo_coeff, compact=False)
-#        h2mo = numpy.reshape(h2mo, (nmo, nmo, nmo, nmo))
-        h2mo = int_transform(eri_ao, mo_coeff)
-        h2mo_2 = int_transform(eri_ao, mo_coeff)
-        h2mo_3 = int_transform(eri_ao, mo_coeff)
+        h2mo = int_transform(eri_ao, mp.mo_coeff)
+        h2mo_2 = int_transform(eri_ao, mp.mo_coeff)
+        h2mo_3 = int_transform(eri_ao, mp.mo_coeff)
         h1ao = mp._scf.get_hcore(mp.mol)
-        h1mo = numpy.matmul(mo_coeff.T,numpy.matmul(h1ao,mo_coeff))
+        h1mo = numpy.matmul(mp.mo_coeff.T,numpy.matmul(h1ao, mp.mo_coeff))
         
         #####################
         ### Hartree-Fock
@@ -87,184 +80,38 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                 for k in range(nocc):
                     fock_hf[p,q] += 2.*h2mo[p,q,k,k] - h2mo[p,k,k,q]
 
+        #uncorrelated fock
         fock = fock_hf
-
-        #print(fock)
 
         c0 = 0.
         e_corr = 0.
         for i in range(nocc):
             for j in range(nocc):
                 c0 -= 2.*h2mo[i,i,j,j] - h2mo[i,j,j,i]
-        #print("c0 ", c0)
-        #test_ene = c0
-        #for i in range(nocc):
-        #    test_ene += 2. * fock[i,i] 
-        #print("test_ene ", test_ene)
-        #exit()
 
         if  mp.second_order:
             mp.ampf = 1.0
 
         #####################
         ### MP1 amplitude
-
-        tmp1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock_hf.dtype)
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        A = a+nocc
-                        B = b+nocc
-                        x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
-                        tmp1[i,a,j,b] = mp.ampf * h2mo[i,A,j,B]/x
-
-        tmp1_bar = numpy.zeros((nocc,nvir,nocc,nvir), dtype=tmp1.dtype)
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        tmp1_bar[i,a,j,b] = tmp1[i,a,j,b] - 0.5 * tmp1[i,b,j,a]
+        tmp1, tmp1_bar = make_amp(mp, h2mo)
         
         #####################
         ### BCH 1st order  
+        c0, c1 = first_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0)
 
-        c1 = numpy.zeros((nmo,nmo), dtype=fock_hf.dtype)
-
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        A = a+nocc
-                        B = b+nocc
-                        c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b]
-                        c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
-                        for p in range(nmo):
-                            c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
-                            c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
         # symmetrize c1
         for p in range(nmo):
             for q in range(nmo):
                 fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
-        
-        #print("fock")
-        #print(fock)
-        #print("c0 ", c0)
-        #exit()
 
+        
         #####################
         ### BCH 2nd order  
-        
         if mp.second_order:
 
-            c1 = numpy.zeros((nmo,nmo), dtype=fock.dtype)
-           
-            #[1]
-            y1 = numpy.zeros((nocc,nvir), dtype=fock.dtype)
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            A = a+nocc
-                            y1[j,b] += fock_hf[i,A] * tmp1_bar[i,a,j,b]
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            A = a+nocc
-                            c1[i,A] += 4. * y1[j,b] * tmp1_bar[i,a,j,b]
-    
-            #[2] [3] [8] [11]
-            y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
-            for j in range(nocc):
-                for c in range(nvir): 
-                    for i in range(nocc):
-                        for a in range(nvir):
-                            for b in range(nvir):
-                                A = a+nocc
-                                C = c+nocc
-                                y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
-            for k in range(nocc):
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for b in range(nvir):
-                                c1[j,k] += 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-                                c1[i,k] += 2. * tmp1[i,a,j,b] * y1[k,a,j,b]
-    
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            for c in range(nvir): 
-                                B = b+nocc
-                                C = c+nocc
-                                c1[B,C] -= 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-            
-            # [6] [7] [4] [10]
-            y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock.dtype)
-            for b in range(nvir):
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for k in range(nocc):
-                                y1[i,a,j,b] += fock_hf[i,k] * tmp1_bar[k,a,j,b]
-            for c in range(nvir): 
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for b in range(nvir):
-                                A = a+nocc
-                                B = b+nocc
-                                C = c+nocc
-                                c1[B,C] += 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-                                c1[A,C] += 2. * tmp1[i,a,j,b] * y1[i,c,j,b]
-            for k in range(nocc):
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for b in range(nvir):
-                                c1[j,k] -= 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-    
-            for i in range(nocc):
-                for a in range(nvir):
-                    for j in range(nocc):
-                        for b in range(nvir):
-                            c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-            
-            #[5]
-            y1 = numpy.zeros((nocc,nocc), dtype=fock.dtype)
-            for k in range(nocc):
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for b in range(nvir):
-                                y1[i,k] += tmp1[i,a,j,b]  * tmp1_bar[k,a,j,b]
-            for k in range(nocc):
-                for i in range(nocc):
-                    for p in range(nmo):
-                        c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
-            
-            #[9]
-            y1 = numpy.zeros((nvir,nvir), dtype=fock.dtype)
-            for c in range(nvir): 
-                for i in range(nocc):
-                    for a in range(nvir):
-                        for j in range(nocc):
-                            for b in range(nvir):
-                                y1[a,c] += tmp1[i,a,j,b] * tmp1_bar[i,c,j,b]
-            for c in range(nvir): 
-                for a in range(nvir):
-                    for p in range(nmo):
-                        A = a+nocc
-                        C = c+nocc
-                        c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
-            
+            c0, c1 = second_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0)
+
             # symmetrize c1
             for p in range(nmo):
                 for q in range(nmo):
@@ -284,14 +131,190 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
         ## diagonalizing correlated Fock 
         mo_energy, U = scipy.linalg.eigh(fock)
-        mo_coeff = numpy.matmul(mo_coeff, U)
-        #t2 = tmp1
+        mo_coeff = numpy.matmul(mp.mo_coeff, U)
+        mp.mo_energy = mo_energy
+        mp.mo_coeff  = mo_coeff
 
-    #print("mo_energy =", flush=True)
-    #print(mo_energy, flush=True)
 
-        
+    e_corr = ene_tot - ene_hf
 
+    return e_corr
+
+#################################################################################################################
+
+def int_transform(eri_ao, mo_coeff):
+    nao = mo_coeff.shape[0]
+    nmo = mo_coeff.shape[1]
+    eri_mo = numpy.dot(mo_coeff.T, eri_ao.reshape(nao,-1))
+    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
+    eri_mo = eri_mo.reshape(nmo,nao,nao,nmo).transpose(1,0,3,2)
+    eri_mo = numpy.dot(mo_coeff.T, eri_mo.reshape(nao,-1))
+    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
+    eri_mo = eri_mo.reshape(nmo,nmo,nmo,nmo)
+    return eri_mo
+
+def make_amp(mp, h2mo):
+    nmo  = mp.nmo
+    nocc = mp.nocc
+    nvir = mp.nmo - nocc
+    mo_energy = mp.mo_energy
+    mo_coeff  = mp.mo_coeff
+
+    tmp1 = numpy.zeros((nocc,nvir,nocc,nvir))
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    A = a+nocc
+                    B = b+nocc
+                    x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
+                    tmp1[i,a,j,b] = mp.ampf * h2mo[i,A,j,B]/x
+                    
+    tmp1_bar = numpy.zeros((nocc,nvir,nocc,nvir))
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    tmp1_bar[i,a,j,b] = tmp1[i,a,j,b] - 0.5 * tmp1[i,b,j,a]
+                    
+    return tmp1, tmp1_bar
+
+def first_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0):
+    nmo  = mp.nmo
+    nocc = mp.nocc
+    nvir = mp.nmo - nocc
+
+    c1 = numpy.zeros((nmo,nmo), dtype=fock_hf.dtype)
+
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    A = a+nocc
+                    B = b+nocc
+                    c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b]
+                    c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
+                    for p in range(nmo):
+                        c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
+                        c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
+    return c0, c1
+
+def second_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0):
+    nmo  = mp.nmo
+    nocc = mp.nocc
+    nvir = mp.nmo - nocc
+
+    c1 = numpy.zeros((nmo,nmo), dtype=fock_hf.dtype)
+           
+    #[1]
+    y1 = numpy.zeros((nocc,nvir), dtype=fock_hf.dtype)
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    A = a+nocc
+                    y1[j,b] += fock_hf[i,A] * tmp1_bar[i,a,j,b]
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    A = a+nocc
+                    c1[i,A] += 4. * y1[j,b] * tmp1_bar[i,a,j,b]
+    
+    #[2] [3] [8] [11]
+    y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock_hf.dtype)
+    for j in range(nocc):
+        for c in range(nvir): 
+            for i in range(nocc):
+                for a in range(nvir):
+                    for b in range(nvir):
+                        A = a+nocc
+                        C = c+nocc
+                        y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
+    for k in range(nocc):
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for b in range(nvir):
+                        c1[j,k] += 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
+                        c1[i,k] += 2. * tmp1[i,a,j,b] * y1[k,a,j,b]
+    
+#    for i in range(nocc):
+#        for a in range(nvir):
+#            for j in range(nocc):
+#                for b in range(nvir):
+#                    for c in range(nvir): 
+#                        B = b+nocc
+#                        C = c+nocc
+#                        c1[B,C] -= 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
+    
+    # [6] [7] [4] [10]
+    y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock_hf.dtype)
+    for b in range(nvir):
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for k in range(nocc):
+                        y1[i,a,j,b] += fock_hf[i,k] * tmp1_bar[k,a,j,b]
+    for c in range(nvir): 
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for b in range(nvir):
+                        A = a+nocc
+                        B = b+nocc
+                        C = c+nocc
+                        c1[B,C] += 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
+                        c1[A,C] += 2. * tmp1[i,a,j,b] * y1[i,c,j,b]
+    for k in range(nocc):
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for b in range(nvir):
+                        c1[j,k] -= 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
+    
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                for b in range(nvir):
+                    c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
+    
+    #[5]
+    y1 = numpy.zeros((nocc,nocc), dtype=fock_hf.dtype)
+    for k in range(nocc):
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for b in range(nvir):
+                        y1[i,k] += tmp1[i,a,j,b]  * tmp1_bar[k,a,j,b]
+    for k in range(nocc):
+        for i in range(nocc):
+            for p in range(nmo):
+                c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
+    
+    #[9]
+    y1 = numpy.zeros((nvir,nvir), dtype=fock_hf.dtype)
+    for c in range(nvir): 
+        for i in range(nocc):
+            for a in range(nvir):
+                for j in range(nocc):
+                    for b in range(nvir):
+                        y1[a,c] += tmp1[i,a,j,b] * tmp1_bar[i,c,j,b]
+    for c in range(nvir): 
+        for a in range(nvir):
+            for p in range(nmo):
+                A = a+nocc
+                C = c+nocc
+                c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
+
+    return c0, c1
+
+#def eval_IP_EA():
     ### evaluating IPs and EAs
     #ip_obmp2 = []
     #for h in range(nocc):
@@ -343,23 +366,7 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     #print("ea_obmp2 (in eV)", flush=True)
     #print(ea_obmp2, flush=True)
 
-    mp.mo_energy = mo_energy
-    mp.mo_coeff  = mo_coeff
-    #mp.t2        = tmp1
-    e_corr = ene_tot - ene_hf
 
-    return e_corr
-
-def int_transform(eri_ao, mo_coeff):
-    nao = mo_coeff.shape[0]
-    nmo = mo_coeff.shape[1]
-    eri_mo = numpy.dot(mo_coeff.T, eri_ao.reshape(nao,-1))
-    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
-    eri_mo = eri_mo.reshape(nmo,nao,nao,nmo).transpose(1,0,3,2)
-    eri_mo = numpy.dot(mo_coeff.T, eri_mo.reshape(nao,-1))
-    eri_mo = numpy.dot(eri_mo.reshape(-1,nao), mo_coeff)
-    eri_mo = eri_mo.reshape(nmo,nmo,nmo,nmo)
-    return eri_mo
 
 def make_rdm1(mp): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
     '''Spin-traced one-particle density matrix.
@@ -656,6 +663,9 @@ class OBMP2(lib.StreamObject):
     def ao2mo(self, mo_coeff=None):
         return _make_eris(self, mo_coeff, verbose=self.verbose)
 
+    make_amp  = make_amp
+    first_BCH = first_BCH
+    second_BCH = second_BCH
     make_rdm1 = make_rdm1
     #make_rdm2 = make_rdm2
 

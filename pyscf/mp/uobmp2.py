@@ -95,9 +95,9 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     conv = False 
     eri_ao = mp.mol.intor('int2e_sph')
 
-    #print("shift = ", mp.shift)
-    #print ("thresh = ", mp.thresh)
-    #print ("niter = ", mp.niter)
+    print("shift = ", mp.shift)
+    print ("thresh = ", mp.thresh)
+    print ("niter = ", mp.niter)
 
     for it in range(niter):
         #if it == 5:
@@ -471,8 +471,11 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
                                 c1_b[i,k] += 1. * tmp1_bb[i,a,j,b] * y1_bb[k,a,j,b]
                         for j in range(nocca):
                             for b in range(nvira):
-                                c1_b[i,k] += 1. * tmp1_ba[i,a,j,b] * y1_ba[i,a,k,b]
-    
+                                if mp.break_sym:
+                                    c1_b[i,k] += 1. * tmp1_ba[i,a,j,b] * y1_ba[i,a,k,b]
+                                else:
+                                    c1_b[i,k] += 1. * tmp1_ba[i,a,j,b] * y1_ba[k,a,j,b]
+                                    
     
             #[4]
             y1_aa = numpy.zeros((nocca,nvira,nocca,nvira))
@@ -790,7 +793,10 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene_tot = ene + nuc
         de = abs(ene_tot - ene_old)
         ene_old = ene_tot
+        print()
+        print("========================")
         print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de, flush=True)
+        print()
 
         if de < mp.thresh:
             conv = True
@@ -803,6 +809,11 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         mo_coeff[0] = numpy.matmul(mo_coeff[0], U)
         mo_energy[1], U = scipy.linalg.eigh(fock_b)
         mo_coeff[1] = numpy.matmul(mo_coeff[1], U)
+
+        if mp.eval_fc:
+            print("Fermi contact using HF-like density")
+            rdm1 = mp.make_rdm1()
+            mp.make_fc(rdm1)
 
         if mp.mom:
             #aa, ab = mp.vir_exc
@@ -1005,16 +1016,13 @@ def mom_select(mp, mo_coeff_init, mo_coeff_new):
     #mp.ib = indxb
     #return indxa, indxb
 
-def make_rdm1(mp, use_t2=False, **kwargs):
+def make_rdm1(mp, use_t2=False, use_ao=True, **kwargs):
     '''One-particle density matrix
 
     Returns:
         A list of 2D ndarrays for alpha and beta spins
     '''
     mo_coeff = mp.mo_coeff
-    #print("mo_coeff")
-    #print(mo_coeff[0])
-    #print(mo_coeff[1])
     mo_occ   = mp._scf.mo_occ
     nocca, noccb = mp.get_nocc()
     nmoa, nmob = mp.get_nmo()
@@ -1083,9 +1091,12 @@ def make_rdm1(mp, use_t2=False, **kwargs):
         dOV = numpy.zeros((noccb,nvirb))
         d1 = (doo, (dov, dOV), (dov.T, dOV.T), dvv)
         rdm1 = uccsd_rdm._make_rdm1(mp, d1, with_frozen=True, ao_repr=False)
-        rdm1_ao =  (reduce(numpy.dot, (mo_coeff[0], rdm1[0], mo_coeff[0].T)), 
-                    reduce(numpy.dot, (mo_coeff[1], rdm1[1], mo_coeff[1].T)))
-        return rdm1_ao
+        if use_ao:
+            rdm1_ao =  (reduce(numpy.dot, (mo_coeff[0], rdm1[0], mo_coeff[0].T)), 
+                        reduce(numpy.dot, (mo_coeff[1], rdm1[1], mo_coeff[1].T)))
+            return rdm1_ao
+        else:
+            return rdm1
 # DO NOT make tag_array for DM here because the DM arrays may be modified and
 # passed to functions like get_jk, get_vxc.  These functions may take the tags
 # (mo_coeff, mo_occ) to compute the potential if tags were found in the DM
@@ -1173,6 +1184,7 @@ class UOBMP2(obmp2.OBMP2):
     int_transform_os = int_transform_os
     mom_select = mom_select
     mom_reorder = mom_reorder
+    break_sym = False
     #use_t2 = False
 
     @lib.with_doc(obmp2.OBMP2.kernel.__doc__)
@@ -1186,6 +1198,7 @@ class UOBMP2(obmp2.OBMP2):
     make_rdm1 = make_rdm1
     #make_rdm2 = make_rdm2
     make_fc = make_fc
+    eval_fc = False
 
     def nuc_grad_method(self):
         from pyscf.grad import ump2
