@@ -17,7 +17,7 @@
 Interface to geometry optimizer pyberny https://github.com/azag0/pyberny
 '''
 
-from __future__ import absolute_import
+
 try:
     from berny import Berny, geomlib, Logger, coords
 except ImportError:
@@ -237,8 +237,8 @@ H       -0.0227 1.1812  -0.8852
         'steprms': 1.5e-2,    # AA
     }
     mol1 = optimize(mf, **conv_params)
-    print(mf.kernel() - -153.219208484874)
-    print(scf.RHF(mol1).kernel() - -153.222680852335)
+    print((mf.kernel() - -153.219208484874))
+    print((scf.RHF(mol1).kernel() - -153.222680852335))
 
     mf = dft.RKS(mol)
     mf.xc = 'pbe,'

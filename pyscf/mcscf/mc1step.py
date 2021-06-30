@@ -35,6 +35,7 @@ from pyscf import fci
 from pyscf.soscf import ciah
 from pyscf.data import nist
 from pyscf import __config__
+from pyscf import molden
 
 import scipy
 import scipy.optimize
@@ -533,11 +534,11 @@ def read_sCI_output(ncas):
             len_civec = list_len_civec[istate]
             civec_istate = []
             config_istate = []
-            for j in xrange(len_civec):
+            for j in range(len_civec):
                 civec_istate.append(float(save_line[i+j+1][7:19]))
                 tmp_ = []
                 l = 0
-                for k in xrange(ncas):
+                for k in range(ncas):
                     l = 22+2*k
                     tmp_.append(save_line[i+j+1][l])
                 config_istate.append(tmp_)
@@ -607,7 +608,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
     W_list = []
     s_list = []
     d_list = []
-    for s in xrange(nroots):
+    for s in range(nroots):
         if not casscf.is_use_sCI:
             ss = casscf.fcisolver.spin_square(fcivec[s], ncas, casscf.nelecas)[0]
         else:
@@ -618,8 +619,8 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         
         ddmNorm = 1./ncas * numpy.linalg.norm(rdm1_MO - rdm1Target) 
 
-        print
-        print "dipole for Root", s
+        print()
+        print("dipole for Root", s)
         rdm1_AO = addons.make_rdm1(casscf, mo_coeff, fcivec[s])
         d = scf.hf.dip_moment(mol=casscf.mol, dm=rdm1_AO, print_dip=False)
         dNorm = numpy.linalg.norm(d - d_target) / (5.*ncas)
@@ -647,7 +648,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         #d *= nist.AU2DEBYE
         #log.note('Dipole moment(X, Y, Z, Debye): %8.5f, %8.5f, %8.5f', *d)
         
-        print
+        print()
         ss_target = 0.5*casscf.target_state_spin*(0.5*casscf.target_state_spin+1)
         if abs(ss - ss_target) < 1e-2:
             W_list.append(W)
@@ -655,6 +656,9 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         #print "Natural orbital analysis: "
         if not casscf.is_use_sCI:
             nat_orbs = casscf.cas_natorb(mo_coeff, fcivec[s])
+            with open("nat_orb-s"+str(s)+".molden", 'w') as f:
+                molden.header(casscf.mol,f)
+                molden.orbital_coeff(casscf.mol, f, nat_orbs[0])  
         #print
         #print "CI vector"
         #print fcivec[s]
@@ -664,7 +668,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
     assert(len(W_list) == len(s_list))
     
     W_min = W_list[0]
-    for i in xrange(len(W_list)):
+    for i in range(len(W_list)):
         #print 'w_min', W_min, W_list[0], target_state
         if abs(W_list[i]) <= abs(W_min):
             target_state = s_list[i]
@@ -720,7 +724,7 @@ def eval_energy(mol, h1e_ao, enuc, mo_coeff, ncas, casdm1, casdm2): # objective 
     #casdm2 = casscf.fcisolver.make_rdm2(fcivec(), ncas, casscf.nelecas)
     H_1e = numpy.einsum('ik,ik->',     casdm1, h1e)  #[:ncas,:ncas]
     H_2e = numpy.einsum('ijkl,ijkl->', casdm2, eri) # 2. W_2e [:ncas,:ncas,:ncas,:ncas]
-    print "H_1e", H_1e, H_2e
+    print("H_1e", H_1e, H_2e)
     return enuc + H_1e + 0.5 * H_2e 
 
 
@@ -748,7 +752,7 @@ def genMOandCI(mc, mol, civec=None, mo_coeff=None):
     wfn_norm = numpy.sqrt(numpy.sum(numpy.matmul(civec, civec.T)))
     #civec = civec/wfn_norm
 
-    print '||civec|| = ', numpy.sqrt(numpy.sum(numpy.matmul(civec, civec.T)))
+    print('||civec|| = ', numpy.sqrt(numpy.sum(numpy.matmul(civec, civec.T))))
     
     #print ""
     #print "NEW MO COEFFICIENTS"
@@ -760,53 +764,53 @@ def genMOandCI(mc, mol, civec=None, mo_coeff=None):
 
     def gen_string():
         # for alpha
-        a = [bin(x) for x in fci.cistring.make_strings(range(ncas),neleca)]        
+        a = [bin(x) for x in fci.cistring.make_strings(list(range(ncas)),neleca)]        
         stringa = []
-        for k in xrange(len(a)):
+        for k in range(len(a)):
             b = list(a[k])[len(list(a[k]))-1]
             for i in range(0,len(list(a[k]))-1):
                 j = len(list(a[k]))-2-i
                 if j > 1:
                     b += list(a[k])[j]
             if len(list(b)) < ncas:
-                for i in xrange(ncas-len(list(b))):
+                for i in range(ncas-len(list(b))):
                     b += '0'
         
             #print b
             c = ''
-            for i in xrange(ncore):
+            for i in range(ncore):
                 c += '1'
             d = ''
-            for i in xrange(nvir):
+            for i in range(nvir):
                 d += '0'
             stringa.append(b)
 
         # for beta
-        a = [bin(x) for x in fci.cistring.make_strings(range(ncas),nelecb)]        
+        a = [bin(x) for x in fci.cistring.make_strings(list(range(ncas)),nelecb)]        
         stringb = []
-        for k in xrange(len(a)):
+        for k in range(len(a)):
             b = list(a[k])[len(list(a[k]))-1]
             for i in range(0,len(list(a[k]))-1):
                 j = len(list(a[k]))-2-i
                 if j > 1:
                     b += list(a[k])[j]
             if len(list(b)) < ncas:
-                for i in xrange(ncas-len(list(b))):
+                for i in range(ncas-len(list(b))):
                     b += '0'
         
             #print b
             c = ''
-            for i in xrange(ncore):
+            for i in range(ncore):
                 c += '1'
             d = ''
-            for i in xrange(nvir):
+            for i in range(nvir):
                 d += '0'
             stringb.append(b)
 
         combo = []
         #print "xxxx ", len(stringa), len(stringb), civec.shape[0], civec.shape[1]
-        for i in xrange(len(stringb)):
-            for j in xrange(len(stringa)):
+        for i in range(len(stringb)):
+            for j in range(len(stringa)):
                 #print i, j, stringa[j], stringb[i], civec[j,i]
                 combo.append([stringa[j], stringb[i], civec[j,i]])
 
@@ -818,31 +822,31 @@ def genMOandCI(mc, mol, civec=None, mo_coeff=None):
     
     string = gen_string()
 
-    print
-    print
-    print " ALPHA   |  BETA    | COEFFICIENT"
-    for i in xrange(nocc):
+    print()
+    print()
+    print(" ALPHA   |  BETA    | COEFFICIENT")
+    for i in range(nocc):
         sys.stdout.write("-")
-    print "-|-",
-    for i in xrange(nocc):
-        sys.stdout.write("-")
-        #print "-",
-    print "-|-",
-    for i in xrange(20):
+    print("-|-") 
+    for i in range(nocc):
         sys.stdout.write("-")
         #print "-",
-    print
+    print("-|-") #, end=' ')
+    for i in range(20):
+        sys.stdout.write("-")
+        #print "-",
+    print()
     #print "   ", stringa
     #print "   ", stringb
-    for i in xrange(len(string)):
+    for i in range(len(string)):
             if abs(string[i][2]) > 0.1:
                 sys.stdout.write(str(string[i][0]))
-                print " | ",
+                print(" | ") #, end=' ')
                 sys.stdout.write(str(string[i][1]))
-                print " | ",
+                print(" | ") #, end=' ')
                 sys.stdout.write(str(string[i][2]))
-                print
-    print "..... DONE WITH GENERAL CI COMPUTATION ..... "
+                print()
+    print("..... DONE WITH GENERAL CI COMPUTATION ..... ")
 
 
 
@@ -1043,10 +1047,10 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=1e-03,
         max_stepsize = casscf.max_stepsize_scheduler(locals())
         imicro = 0
         if(casscf.is_use_gmres):
-            print "Using GMRES"
+            print("Using GMRES")
             for imicro in range(max_cycle_micro):
                 imicro += 1
-                print 'imicro', imicro
+                print('imicro', imicro)
                 u, g_orb = casscf.rotate_orb_gmres(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
                                                    eris, imacro, r0, conv_tol_grad*.3, max_stepsize, log)
                 
@@ -1277,24 +1281,30 @@ def as_scanner(mc, envs=None): #, mo_fname=None):
             self.mol = mol
             
             if (self.mo_coeff is None):
-                print "we are using HF orbitals"
+                print("we are using HF orbitals")
                 mo = mf_scanner.mo_coeff
             else:
-                print "we are using predefined orbitals"
+                print("we are using predefined orbitals")
                 mo = self.mo_coeff
+                geom_cycle = int(os.environ["cycle"])
+                from pyscf import molden
+                with open("geomopt_cycle_"+str(geom_cycle)+".molden", 'w') as f:
+                    molden.header(mol,f)
+                    molden.orbital_coeff(mol, f, self.mo_coeff)
+
                 
-            #geom_cycle = int(os.environ["cycle"])+1
+            geom_cycle = int(os.environ["cycle"])
             #if geom_cycle == 1:
             #    mo_coeff_fix = mo
             #else:
             #    print "we are using the fixed MOs"
             #    mo = mo_coeff_fix
-                
-            mo = project_init_guess(self, mo)
+            if geom_cycle > 0:    
+                mo = project_init_guess(self, mo)
             #print "envs[cycle]", envs['cycle']
             #Lan: optimizing excited state
             if(self.is_select_state):
-                print "You are optimizing your selected state"
+                print("You are optimizing your selected state")
                 #if os.environ.get("cycle") is not None:
                 #    geom_cycle = int(os.environ["cycle"])+1
                 #    if geom_cycle > 1:
@@ -1321,22 +1331,21 @@ def as_scanner(mc, envs=None): #, mo_fname=None):
                 #    molden.header(mol,f)
                 #    molden.orbital_coeff(self.mol, f, self.mo_coeff)
             elif(self.sa_geom_opt):
-                print
-                print "WARN: you are optimizing geometry using SA-CASSCF orbitals w/o solving Z-vector equation!!!"
+                print()
+                print("WARN: you are optimizing geometry using SA-CASSCF orbitals w/o solving Z-vector equation!!!")
                 nroots = self.fcisolver.nroots
                 w = 1./nroots
                 mc_sa = CASSCF(mol, self.ncas, self.nelecas, frozen=None)
-                #cas_list = [25,27,28,29,30,31,32,33,34,37,43]
-                #geom_cycle = int(os.environ["cycle"])+1
-                #mc_sa.mo_coeff = addons.sort_mo(mc_sa, mo, cas_list)
-                mc_sa.fcisolver = fci.solver(mol, singlet=True)
+                mc_sa.mo_coeff = mo
+                mc_sa.fcisolver = fci.solver(mol) #, singlet=True)
                 mc_sa = addons.state_average_(mc_sa, nroots*(w,))
                 mc_sa.is_select_state = False
-                #mc_sa.is_use_gmres = True
-                #mc_sa.gmres_hess_shift=0.2
+                mc_sa.is_use_gmres = True
+                mc_sa.gmres_hess_shift=0.2
                 mc_sa.kernel(mo)
                 mo = mc_sa.mo_coeff
-                e_tot = self.mc2step(mo, self.ci)[0]
+                e_tot = self.mc1step(mo, self.ci)[0]
+                print(e_tot)
             else:
                 e_tot = self.kernel(mo, self.ci)[0]
             return e_tot
@@ -1688,7 +1697,12 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     ss = self.fcisolver.spin_square(fcivec, self.ncas, self.nelecas)
                 else:
                     ss = None
-    
+                if not self.is_use_sCI:
+                    log.info("Dipole moment and natural orbitals")
+                    rdm1_AO = addons.make_rdm1(self, mo_coeff, fcivec)
+                    d = scf.hf.dip_moment(mol=self.mol, dm=rdm1_AO, print_dip=False)
+                    nat_orbs = self.cas_natorb(mo_coeff, fcivec)
+
                 if 'imicro' in envs:  # Within CASSCF iteration
                     if ss is None:
                         log.info('macro iter %d (%d JK  %d micro), '
@@ -1733,7 +1747,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                             if(self.is_use_sCI):
                                 civec, config = read_sCI_output(self.ncas)
 
-                            for i in xrange(nroots):
+                            for i in range(nroots):
                                 if not self.is_use_sCI:
                                     ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)[0]
                                 else:
@@ -1742,7 +1756,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                                          i, e_tot[i], ss)
                             
                             # target the desired state
-                            print
+                            print()
                             log.info('Selecting the CI vector ...')
                             
                             self.target_state, dipole = select_target_state(self, mo_coeff, fcivec, e_tot, envs, self.target_state, nroots, eris)
@@ -1786,7 +1800,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     if os.environ.get("cycle") is not None:
                         geom_cycle = int(os.environ["cycle"])+1
                         #print "geomopt cycle = ", geom_cycle
-                    print
+                    print()
                     log.info('CASCI information')
                     #reading sCI information from output.dat
                     civec = [] #dump variable for sCI
@@ -1794,30 +1808,34 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                     if(self.is_use_sCI):
                         civec, config = read_sCI_output(self.ncas)
 
-                    for i in xrange(nroots):
+                    for i in range(nroots):
                         if not self.is_use_sCI:
                             ss = self.fcisolver.spin_square(fcivec[i], self.ncas, self.nelecas)[0]
                         else:
                             ss = extract_spin_state_sCI(i, civec, config)
                         log.info('CASCI state %d  E = %.15g S^2 = %.7f',
                                  i, e_tot[i], ss)
-                    print
-                    for i in xrange(nroots):
-                        print "Root ", i
+                    print()
+                    for i in range(nroots):
+                        print("Root ", i)
                         rdm1_AO = addons.make_rdm1(self, mo_coeff, fcivec[i])
                         #print "rdm1_AO"
                         #print rdm1_AO
                         d = scf.hf.dip_moment(mol=self.mol, dm=rdm1_AO)
-                        print
+                        print()
                         if not self.is_use_sCI:
                             nat_orbs = self.cas_natorb(mo_coeff, fcivec[i])
-                        print
+                            with open("nat_orb-s"+str(i)+".molden", 'w') as f:
+                                molden.header(self.mol,f)
+                                molden.orbital_coeff(self.mol, f, nat_orbs[0])  
+
+                        print()
                         #print "CI vector"
                         #print fcivec[i]
                     #exit()
                     #select target state for new geometry opt cycle
                     if geom_cycle > 1 and self.is_select_state:
-                        print "Selecting target state for new geometry opt cycle"
+                        print("Selecting target state for new geometry opt cycle")
                         nmo = mo_coeff.shape[1]
                         rdm1_prevgeom_AO = envs['rdm1_pregeom_AO']
                         rdm1_prevgeom_MO = rota_rdms(mo_coeff, rdm1_prevgeom_AO) #rotate rdm1 to new MOs
@@ -1826,7 +1844,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                         
                         k = 0
                         self.target_state = 0
-                        for s in xrange(nroots):
+                        for s in range(nroots):
                             if not self.is_use_sCI:
                                 ss = self.fcisolver.spin_square(fcivec[s], self.ncas, self.nelecas)[0]
                             else:
@@ -1844,7 +1862,7 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                                 ddipoleNorm = numpy.linalg.norm(d - d_prevgeom)
                                 dNorm += ddipoleNorm
                                 
-                            print "state ", s, "ddmNorm = ", abs(ddmNorm), "dNorm = ", abs(dNorm)
+                            print("state ", s, "ddmNorm = ", abs(ddmNorm), "dNorm = ", abs(dNorm))
                             #print rdm1_MO
                             #print
                             #ddmNorm_min = 0.
@@ -1858,15 +1876,15 @@ To enable the solvent model for CASSCF, a decoration to CASSCF object as below n
                                     if abs(dNorm) < dNorm_min:
                                         self.target_state = s
                                         dNorm_min = abs(dNorm)
-                                        print "dNorm ", dNorm, dNorm_min
+                                        print("dNorm ", dNorm, dNorm_min)
                             else:
-                                print "there is no desirable spin state"
+                                print("there is no desirable spin state")
                                 exit()
                                     
-                    print
+                    print()
                     #self.target_state = 2
                     log.info('Initial targeted root %d', self.target_state)
-                    print
+                    print()
                     e_tot = e_tot[self.target_state]
                     e_cas = e_cas[self.target_state]
                     fcivec = fcivec[self.target_state]
@@ -2327,15 +2345,15 @@ if __name__ == '__main__':
     m = scf.RHF(mol)
     ehf = m.scf()
     emc = kernel(CASSCF(m, 4, 4), m.mo_coeff, verbose=4)[1]
-    print(ehf, emc, emc-ehf)
-    print(emc - -3.22013929407)
+    print((ehf, emc, emc-ehf))
+    print((emc - -3.22013929407))
 
     mc = CASSCF(m, 4, (3,1))
     mc.verbose = 4
     #mc.fcisolver = fci.direct_spin1
     mc.fcisolver = fci.solver(mol, False)
     emc = kernel(mc, m.mo_coeff, verbose=4)[1]
-    print(emc - -15.950852049859-mol.energy_nuc())
+    print((emc - -15.950852049859-mol.energy_nuc()))
 
     mol.atom = [
         ['H', ( 5.,-1.    , 1.   )],
@@ -2355,8 +2373,8 @@ if __name__ == '__main__':
     m = scf.RHF(mol)
     ehf = m.scf()
     emc = kernel(CASSCF(m, 4, 4), m.mo_coeff, verbose=4)[1]
-    print(ehf, emc, emc-ehf)
-    print(emc - -3.62638367550087, emc - -3.6268060528596635)
+    print((ehf, emc, emc-ehf))
+    print((emc - -3.62638367550087, emc - -3.6268060528596635))
 
     mc = CASSCF(m, 4, (3,1))
     mc.verbose = 4
@@ -2364,7 +2382,7 @@ if __name__ == '__main__':
     #mc.fcisolver = fci.direct_spin1
     mc.fcisolver = fci.solver(mol, False)
     emc = kernel(mc, m.mo_coeff, verbose=4)[1]
-    print(emc - -3.62638367550087)
+    print((emc - -3.62638367550087))
 
 
     mol.atom = [
@@ -2382,9 +2400,9 @@ if __name__ == '__main__':
     mc.verbose = 4
     mo = addons.sort_mo(mc, m.mo_coeff, (3,4,6,7,8,9), 1)
     emc = mc.mc1step(mo)[0]
-    print(ehf, emc, emc-ehf)
+    print((ehf, emc, emc-ehf))
     #-76.0267656731 -76.0873922924 -0.0606266193028
-    print(emc - -76.0873923174, emc - -76.0926176464)
+    print((emc - -76.0873923174, emc - -76.0926176464))
 
     mc = CASSCF(m, 6, (3,1))
     mo = addons.sort_mo(mc, m.mo_coeff, (3,4,6,7,8,9), 1)
@@ -2393,8 +2411,8 @@ if __name__ == '__main__':
     mc.verbose = 4
     emc = mc.mc1step(mo)[0]
     #mc.analyze()
-    print(emc - -75.7155632535814)
+    print((emc - -75.7155632535814))
 
     mc.internal_rotation = True
     emc = mc.mc1step(mo)[0]
-    print(emc - -75.7155632535814)
+    print((emc - -75.7155632535814))

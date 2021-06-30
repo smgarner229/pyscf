@@ -168,6 +168,12 @@ def get_jk(mol, dm):
 def get_veff(mf_grad, mol, dm):
     '''NR Hartree-Fock Coulomb repulsion'''
     vj, vk = mf_grad.get_jk(mol, dm)
+#    print "vj"
+#    print vj
+#    print "vk"
+#    print vk
+#    print "vj - vk * .5"
+#    print vj - vk * .5
     return vj - vk * .5
 
 def make_rdm1e(mo_energy, mo_coeff, mo_occ):

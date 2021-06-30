@@ -72,6 +72,11 @@ def kernel(mc, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
 
     dm1 = dm_core + dm_cas
     vhf1c, vhf1a = mf_grad.get_veff(mol, (dm_core, dm_cas))
+    #print "vhf1c"
+    #print vhf1c
+    #print "vhf1a"
+    #print vhf1a
+    
     hcore_deriv = mf_grad.hcore_generator(mol)
     s1 = mf_grad.get_ovlp(mol)
 
@@ -99,7 +104,6 @@ def kernel(mc, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
         h1ao = hcore_deriv(ia)
         de[k] += numpy.einsum('xij,ij->x', h1ao, dm1)
         de[k] -= numpy.einsum('xij,ij->x', s1[:,p0:p1], dme0[p0:p1]) * 2
-
         q1 = 0
         for b0, b1, nf in _shell_prange(mol, 0, mol.nbas, blksize):
             q0, q1 = q1, q1 + nf
@@ -109,6 +113,7 @@ def kernel(mc, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
                              shls_slice=shls_slice).reshape(3,p1-p0,nf,nao_pair)
             de[k] -= numpy.einsum('xijw,ijw->x', eri1, dm2_ao) * 2
             eri1 = None
+        
         de[k] += numpy.einsum('xij,ij->x', vhf1c[:,p0:p1], dm1[p0:p1]) * 2
         de[k] += numpy.einsum('xij,ij->x', vhf1a[:,p0:p1], dm_core[p0:p1]) * 2
 

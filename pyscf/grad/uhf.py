@@ -69,7 +69,8 @@ def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
 
 def get_veff(mf_grad, mol, dm):
     vj, vk = mf_grad.get_jk(mol, dm)
-    return vj[0]+vj[1] - vk
+    #return vj[0]+vj[1] - vk
+    return vj - vk * .5
 
 def make_rdm1e(mo_energy, mo_coeff, mo_occ):
     '''Energy weighted density matrix'''
