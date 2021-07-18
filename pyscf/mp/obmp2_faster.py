@@ -102,11 +102,12 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         if mp.second_order:
 
             #c0, c1 = second_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0)
-
+            c0, c1 = second_BCH(mp, fock_hf, tmp1, tmp1_bar, c0)
             # symmetrize c1
-            for p in range(nmo):
-                for q in range(nmo):
-                    fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
+            #for p in range(nmo):
+            #    for q in range(nmo):
+            #        fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
+            fock += 0.5 * (c1 + c1.T)
 
         ene = c0
         for i in range(nocc):
@@ -158,11 +159,11 @@ def make_veff(mp):
 
     veff = numpy.zeros((nmo,nmo))
 
-    for p in range(nmo):
-        for q in range(nmo):
-            for k in range(nocc):
-                veff[p,q] += 2.*h2mo_ggoo[p,q,k,k] - h2mo_goog[p,k,k,q]
-
+    #for p in range(nmo):
+    #    for q in range(nmo):
+    #        for k in range(nocc):
+    #            veff[p,q] += 2.*h2mo_ggoo[p,q,k,k] - h2mo_goog[p,k,k,q]
+    veff += 2.*numpy.einsum('ijkk -> ij',h2mo_ggoo) - numpy.einsum('ijjk -> ik',h2mo_goog)
 
     c0_hf = 0.
     for i in range(nocc):
@@ -185,22 +186,25 @@ def make_amp(mp):
     h2mo = h2mo.reshape(nocc,nvir,nocc,nvir)
 
     tmp1 = numpy.zeros((nocc,nvir,nocc,nvir))
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    A = a+nocc
-                    B = b+nocc
-                    x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
-                    tmp1[i,a,j,b] = mp.ampf * h2mo[i,a,j,b]/x
-                    
+    #for i in range(nocc):
+    #    for a in range(nvir):
+    #        for j in range(nocc):
+    #            for b in range(nvir):
+    #                A = a+nocc
+    #                B = b+nocc
+    #                x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
+    #                tmp1[i,a,j,b] = mp.ampf * h2mo[i,a,j,b]/x
+    x = numpy.tile(mo_energy[:nocc,None] - mo_energy[None,nocc:],(nocc,nvir,1,1))
+    x += numpy.einsum('ijkl -> klij', x) - mp.shift
+    tmp1 = mp.ampf * h2mo/x
+
     tmp1_bar = numpy.zeros((nocc,nvir,nocc,nvir))
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    tmp1_bar[i,a,j,b] = tmp1[i,a,j,b] - 0.5 * tmp1[i,b,j,a]
-                    
+    #for i in range(nocc):
+    #    for a in range(nvir):
+    #        for j in range(nocc):
+    #            for b in range(nvir):
+    #                tmp1_bar[i,a,j,b] = tmp1[i,a,j,b] - 0.5 * tmp1[i,b,j,a]
+    tmp1_bar = tmp1 - 0.5*numpy.einsum('ijkl -> ilkj', tmp1)         
     return tmp1, tmp1_bar
 
 def first_BCH(mp, fock_hf, tmp1, tmp1_bar, c0):
@@ -224,135 +228,112 @@ def first_BCH(mp, fock_hf, tmp1, tmp1_bar, c0):
     h2mo_ovog = ao2mo.general(mp._scf._eri, (co,cv,co,cg))
     h2mo_ovog = h2mo_ovog.reshape(nocc,nvir,nocc,nmo)
 
+    #for i in range(nocc):
+    #    for a in range(nvir):
+    #        for j in range(nocc):
+    #            for b in range(nvir):
+    #                A = a+nocc
+    #                B = b+nocc
+    #               #c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b] ####### very old c0 #######
+    #                #c0 -= 4. * h2mo_ovov[i,a,j,b] * tmp1_bar[i,a,j,b] ####### old c0 #######
+    #                c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
+    #                for p in range(nmo):
+    #                    #c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
+    #                    #c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
+    #                    c1[p,j] += 4. * h2mo_ovgv[i,a,p,b] *  tmp1_bar[i,a,j,b]
+    #                    c1[p,B] -= 4. * h2mo_ovog[i,a,j,p] *  tmp1_bar[i,a,j,b]
+    
+    c0 -= 4.*numpy.sum(numpy.multiply(h2mo_ovov,tmp1_bar))
+    ####################### c1[j,B] #########################
+
+    c1_jb = (4.*numpy.einsum('ijkl -> ij',numpy.multiply(numpy.einsum('ijkl -> klij',tmp1_bar),numpy.tile(fock_hf[:nocc,nocc:],(nocc,nvir,1,1)))))
+    c1_jb = numpy.pad(c1_jb, [(0, nvir), (nocc, 0)], mode='constant')
+
+    ####################### c1[p,j] #########################
+
+    h2mo_cut = numpy.einsum('ijkl -> ijlk',h2mo_ovgv).reshape(-1,nmo)
     for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    A = a+nocc
-                    B = b+nocc
-                    #c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b]
-                    c0 -= 4. * h2mo_ovov[i,a,j,b] * tmp1_bar[i,a,j,b]
-                    c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
-                    for p in range(nmo):
-                        #c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
-                        #c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
-                        c1[p,j] += 4. * h2mo_ovgv[i,a,p,b] *  tmp1_bar[i,a,j,b]
-                        c1[p,B] -= 4. * h2mo_ovog[i,a,j,p] *  tmp1_bar[i,a,j,b]
+        mul = numpy.multiply(h2mo_cut,numpy.repeat(tmp1_bar[:,:,i,:],nmo,2).reshape(-1,nmo))
+        c1[:,i] = 4.*numpy.sum(mul,0)
+
+    ####################### c1[p,B] #########################
+
+    h2mo_cut = h2mo_ovog.reshape(-1,nmo)
+    for i in range(nocc,nmo):
+        mul = numpy.multiply(h2mo_cut,numpy.repeat(tmp1_bar[:,:,:,i-nocc],nmo,2).reshape(-1,nmo))
+        c1[:,i] = -4.*numpy.sum(mul,0)
+
+    c1 = c1 + c1_jb
     return c0, c1
 
-def second_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0):
+def second_BCH(mp, fock_hf, tmp1, tmp1_bar, c0):
     nmo  = mp.nmo
     nocc = mp.nocc
     nvir = mp.nmo - nocc
 
     c1 = numpy.zeros((nmo,nmo), dtype=fock_hf.dtype)
-           
     #[1]
     y1 = numpy.zeros((nocc,nvir), dtype=fock_hf.dtype)
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    A = a+nocc
-                    y1[j,b] += fock_hf[i,A] * tmp1_bar[i,a,j,b]
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    A = a+nocc
-                    c1[i,A] += 4. * y1[j,b] * tmp1_bar[i,a,j,b]
-    
+    y1 = numpy.einsum('ijkl -> kl', numpy.einsum('ijkl -> klij',numpy.tile(fock_hf[:nocc,nocc:],(nocc,nvir,1,1))) * tmp1_bar)
+
+    c1[:nocc,nocc:] += 4.*numpy.einsum('ijkl -> ij',numpy.tile(y1,(nocc,nvir,1,1)) * tmp1_bar)
+
     #[2] [3] [8] [11]
     y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock_hf.dtype)
-    for j in range(nocc):
-        for c in range(nvir): 
-            for i in range(nocc):
-                for a in range(nvir):
-                    for b in range(nvir):
-                        A = a+nocc
-                        C = c+nocc
-                        y1[i,a,j,b] += fock_hf[A,C] * tmp1_bar[i,c,j,b]
+
+    for c in range(nvir):
+        y1 += numpy.einsum('ijkl -> klij',numpy.tile(fock_hf[nocc:,c-nvir].T,(nocc,nvir,nocc,1))) \
+        *numpy.einsum('ijkl ->jikl',numpy.tile(tmp1_bar[:,c,:,:],(nvir,1,1,1)))
+
     for k in range(nocc):
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        c1[j,k] += 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-                        c1[i,k] += 2. * tmp1[i,a,j,b] * y1[k,a,j,b]
-    
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    for c in range(nvir): 
-                        B = b+nocc
-                        C = c+nocc
-                        c1[B,C] -= 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    c0 -= 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-    
+        c1[:nocc,k] += 2.*(numpy.einsum('ijkl -> k',tmp1 \
+                            * numpy.einsum('ijkl -> jkil',numpy.tile(y1[:,:,k,:],(nocc,1,1,1)))) \
+                            + numpy.einsum('ijkl -> i',tmp1 * numpy.tile(y1[k,:,:,:],(nocc,1,1,1))))
+
+    for b in range(nvir):    
+        c1[b+nocc,nocc:] -= 2. * numpy.einsum('ijkl -> l',y1 * \
+            numpy.einsum('ijkl -> jkli',numpy.tile(tmp1[:,:,:,b],(nvir,1,1,1))))
+                
+    c0 -= 4.*numpy.sum(tmp1 * y1)
+
     # [6] [7] [4] [10]
     y1 = numpy.zeros((nocc,nvir,nocc,nvir), dtype=fock_hf.dtype)
-    for b in range(nvir):
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for k in range(nocc):
-                        y1[i,a,j,b] += fock_hf[i,k] * tmp1_bar[k,a,j,b]
-    for c in range(nvir): 
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        A = a+nocc
-                        B = b+nocc
-                        C = c+nocc
-                        c1[B,C] += 2. * tmp1[i,a,j,b] * y1[i,a,j,c]
-                        c1[A,C] += 2. * tmp1[i,a,j,b] * y1[i,c,j,b]
+
     for k in range(nocc):
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        c1[j,k] -= 2. * tmp1[i,a,j,b] * y1[i,a,k,b]
-    
-    for i in range(nocc):
-        for a in range(nvir):
-            for j in range(nocc):
-                for b in range(nvir):
-                    c0 += 4. * tmp1[i,a,j,b] * y1[i,a,j,b]
-    
+        y1 += numpy.einsum('ijkl -> ljik',numpy.tile(fock_hf[:nocc,k],(nocc,nvir,nvir,1))) \
+        * numpy.tile(tmp1_bar[k,:,:,:],(nocc,1,1,1))
+
+    for c in range (nvir):
+        c1[nocc:,c+nocc] += 2. * (numpy.einsum('ijkl -> l',tmp1 * \
+            numpy.einsum('ijkl -> jkli',numpy.tile(y1[:,:,:,c],(nvir,1,1,1)))) \
+             +  numpy.einsum('ijkl -> j',tmp1 * \
+            numpy.einsum('ijkl -> jikl',numpy.tile(y1[:,c,:,:],(nvir,1,1,1)))))          
+
+    for k in range(nocc):
+        c1[:nocc,k] -= 2.*(numpy.einsum('ijkl -> k',tmp1 \
+                        * numpy.einsum('ijkl -> jkil',numpy.tile(y1[:,:,k,:],(nocc,1,1,1)))))    
+
+    c0 += 4.*numpy.sum(tmp1 * y1)    
     #[5]
     y1 = numpy.zeros((nocc,nocc), dtype=fock_hf.dtype)
+
     for k in range(nocc):
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        y1[i,k] += tmp1[i,a,j,b]  * tmp1_bar[k,a,j,b]
+        y1[:,k] += numpy.einsum('ijkl -> i',tmp1 * numpy.tile(tmp1_bar[k,:,:,:],(nocc,1,1,1)))
+
     for k in range(nocc):
-        for i in range(nocc):
-            for p in range(nmo):
-                c1[p,k] -= 2. * fock_hf[i,p] * y1[i,k]
-    
+        c1[:,k] -= 2. * numpy.einsum('ij -> i', \
+                    fock_hf[:nocc,:].T * numpy.tile(y1[:,k],(nmo,1)))
+
     #[9]
     y1 = numpy.zeros((nvir,nvir), dtype=fock_hf.dtype)
-    for c in range(nvir): 
-        for i in range(nocc):
-            for a in range(nvir):
-                for j in range(nocc):
-                    for b in range(nvir):
-                        y1[a,c] += tmp1[i,a,j,b] * tmp1_bar[i,c,j,b]
-    for c in range(nvir): 
-        for a in range(nvir):
-            for p in range(nmo):
-                A = a+nocc
-                C = c+nocc
-                c1[p,C] -= 2. * fock_hf[A,p] * y1[a,c]
 
+    for c in range(nvir):                
+        y1[:,c] += numpy.einsum('ijkl -> j',tmp1 * \
+            numpy.einsum('ijkl -> jikl',numpy.tile(tmp1_bar[:,c,:,:],(nvir,1,1,1))))     
+                 
+    for c in range(nvir):
+        c1[:,c+nocc] -= 2. * numpy.einsum('ij -> i', \
+                    fock_hf[nocc:,:].T * numpy.tile(y1[:,c],(nmo,1)))
     return c0, c1
 
 #def eval_IP_EA():
