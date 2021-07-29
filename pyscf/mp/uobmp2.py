@@ -802,6 +802,25 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
             conv = True
             break
 
+        if mp.eval_fc:
+            print("Fermi contact using HF-like density")
+            rdm1 = mp.make_rdm1()
+            #R_reslv = None #[-1,4.0] #so primitive
+            mp.make_fc(rdm1) #, it, R_reslv)
+
+            #mp.make_fc(rdm1, it, R_reslv=None)
+            #print("Spin occupation numbers:")
+            #
+            #print("Fermi contact using correlated density")
+            ##rdm1 = mp.make_rdm1(use_t2=True)
+            #rdm1 = mp.make_rdm1(use_t2=True,use_ao=False)
+            #rdm1_ao =  (reduce(numpy.dot, (mo_coeff[0], rdm1[0], mo_coeff[0].T)), 
+            #            reduce(numpy.dot, (mo_coeff[1], rdm1[1], mo_coeff[1].T)))
+            #spinrdm1 = rdm1[0] - rdm1[1]
+            ##spinocc = numpy.sort(spinocc)[::-1]    
+            #print(spinocc[0:nocca])
+
+            
         #if it > 0:
         #    fock_a = 0.01*fock_a + 0.99*fock_a_old
         ### diagonalizing correlated Fock 
@@ -809,11 +828,6 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         mo_coeff[0] = numpy.matmul(mo_coeff[0], U)
         mo_energy[1], U = scipy.linalg.eigh(fock_b)
         mo_coeff[1] = numpy.matmul(mo_coeff[1], U)
-
-        if mp.eval_fc:
-            print("Fermi contact using HF-like density")
-            rdm1 = mp.make_rdm1()
-            mp.make_fc(rdm1)
 
         if mp.mom:
             #aa, ab = mp.vir_exc
@@ -1115,7 +1129,7 @@ def _gamma1_intermediates(mp, t2):
     dvvb += lib.einsum('mnea,mneb->ba', t2ab.conj(), t2ab)
     return ((dooa, doob), (dvva, dvvb))
 
-def make_fc(mp, dm0, hfc_nuc=None, verbose=None):
+def make_fc(mp, dm0, it=None, R_reslv=None, hfc_nuc=None, verbose=None):
     '''The contribution of Fermi-contact term and dipole-dipole interactions'''
     #log = logger.new_logger(hfcobj, verbose)
     mol = mp.mol
@@ -1128,6 +1142,29 @@ def make_fc(mp, dm0, hfc_nuc=None, verbose=None):
     spindm = dma - dmb
     effspin = mol.spin * .5
 
+    #if R_reslv is not None:
+    #    mo_coeff = mp.mo_coeff
+    #    nocca, noccb = mp.get_nocc()
+    #    dma_mo, dmb_mo = mp.make_rdm1(use_t2=True,use_ao=False)
+    #    spinnocca, U = scipy.linalg.eigh(dma_mo)
+    #    spinmoa = numpy.matmul(mo_coeff[0], U)
+    #    nao = mo_coeff[0].shape[0]
+    #    tmp = numpy.zeros((nao,nao))
+    #    for mu in range(nao):
+    #        for nu in range(nao):
+    #            tmp[mu,nu] = spinmoa[] * spinmoa[mu,nocca-1] * spinmoa[nu,nocca-1]
+    #    np = 1000
+    #    dz = (R_reslv[1] - R_reslv[0])/np
+    #    fname = "spinden_somo"+str(it)+".dat"
+    #    with open(fname, 'w') as f:
+    #        for i in range(np):
+    #            r = i*dz + R_reslv[0]
+    #            coords = [[0,0,r]]
+    #            h1fc = _get_integrals_fc_Rreslv(mol, coords)
+    #            fc = numpy.einsum('ij,ji', h1fc, tmp)
+    #            f.write(" %8.6f %8.6f \n"  %(r, fc))
+
+
     e_gyro = .5 * nist.G_ELECTRON
     nuc_mag = .5 * (nist.E_MASS/nist.PROTON_MASS)  # e*hbar/2m
     au2MHz = nist.HARTREE2J / nist.PLANCK * 1e-6
@@ -1136,13 +1173,13 @@ def make_fc(mp, dm0, hfc_nuc=None, verbose=None):
     hfc = []
     for i, atm_id in enumerate(hfc_nuc):
         nuc_gyro = get_nuc_g_factor(mol.atom_symbol(atm_id)) * nuc_mag
-        h1 = _get_integrals_fcdip(mol, atm_id)
-        fcsd = numpy.einsum('xyij,ji->xy', h1, spindm)
+        #h1 = _get_integrals_fcdip(mol, atm_id)
+        #fcsd = numpy.einsum('xyij,ji->xy', h1, spindm)
 
         h1fc = _get_integrals_fc(mol, atm_id)
         fc = numpy.einsum('ij,ji', h1fc, spindm)
 
-        sd = fcsd + numpy.eye(3) * fc
+        #sd = fcsd + numpy.eye(3) * fc
 
         print('FC of atom %d :'%atm_id, '%8.6f (in MHz)' %(2*fac * nuc_gyro * fc))
         #if hfcobj.verbose >= logger.INFO:
@@ -1171,6 +1208,11 @@ def _get_integrals_fcdip(mol, atm_id):
 def _get_integrals_fc(mol, atm_id):
     '''AO integrals for Fermi contact term'''
     coords = mol.atom_coord(atm_id).reshape(1, 3)
+    ao = mol.eval_gto('GTOval', coords)
+    return 4*numpy.pi/3 * numpy.einsum('ip,iq->pq', ao, ao)
+
+def _get_integrals_fc_Rreslv(mol, coords):
+    '''AO integrals for Fermi contact term'''
     ao = mol.eval_gto('GTOval', coords)
     return 4*numpy.pi/3 * numpy.einsum('ip,iq->pq', ao, ao)
 
