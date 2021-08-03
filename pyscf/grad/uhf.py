@@ -56,6 +56,9 @@ def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         shl0, shl1, p0, p1 = aoslices[ia]
         h1ao = hcore_deriv(ia)
         de[k] += numpy.einsum('xij,ij->x', h1ao, dm0_sf)
+        test = numpy.einsum('xij,ij->x', h1ao, dm0_sf)
+        print('test')
+        print(test)
 # s1, vhf are \nabla <i|h|j>, the nuclear gradients = -\nabla
         de[k] += numpy.einsum('sxij,sij->x', vhf[:,:,p0:p1], dm0[:,p0:p1]) * 2
         de[k] -= numpy.einsum('xij,ij->x', s1[:,p0:p1], dme0_sf[p0:p1]) * 2

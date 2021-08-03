@@ -38,7 +38,7 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
 
     mo = mo_coeff
     nmo = mo.shape[1]
-    print "nmo", nmo
+    print("nmo", nmo)
     eris = casscf.ao2mo(mo)
     #print 'ci0', ci0
     if os.environ.get("cycle") is not None:
@@ -86,17 +86,17 @@ def kernel(casscf, mo_coeff, tol=1e-7, conv_tol_grad=5e-04,
         casdm1_old = casdm1
         #print "fcivec", fcivec
         casdm1, casdm2 = casscf.fcisolver.make_rdm12(fcivec, casscf.ncas, casscf.nelecas)
-        print "casdm1 casdm1"
-        print casdm1
+        print("casdm1 casdm1")
+        print(casdm1)
         norm_ddm = numpy.linalg.norm(casdm1 - casdm1_old)
         t3m = log.timer('update CAS DM', *t3m)
         max_cycle_micro = casscf.micro_cycle_scheduler(locals())
         max_stepsize = casscf.max_stepsize_scheduler(locals())
 
         if(casscf.is_use_gmres): 
-            print "Using GMRES"
+            print("Using GMRES")
             for imicro in range(max_cycle_micro):
-                print 'imicro', imicro
+                print('imicro', imicro)
                 u, g_orb = casscf.rotate_orb_gmres(mo, lambda:fcivec, lambda:casdm1, lambda:casdm2,
                                                    eris, imacro, r0, conv_tol_grad*.3, max_stepsize, log)
                 
@@ -243,8 +243,8 @@ if __name__ == '__main__':
     m = scf.RHF(mol)
     ehf = m.scf()
     emc = kernel(mc1step.CASSCF(m, 4, 4), m.mo_coeff, verbose=4)[1]
-    print(ehf, emc, emc-ehf)
-    print(emc - -3.22013929407)
+    print((ehf, emc, emc-ehf))
+    print((emc - -3.22013929407))
 
 
     mol.atom = [
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     mo = m.mo_coeff.copy()
     mo[:,2:5] = m.mo_coeff[:,[4,2,3]]
     emc = mc.mc2step(mo)[0]
-    print(ehf, emc, emc-ehf)
+    print((ehf, emc, emc-ehf))
     #-76.0267656731 -76.0873922924 -0.0606266193028
-    print(emc - -76.0873923174, emc - -76.0926176464)
+    print((emc - -76.0873923174, emc - -76.0926176464))
 

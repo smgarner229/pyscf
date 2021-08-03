@@ -1180,6 +1180,7 @@ def dip_moment(mol, dm, unit='Debye', verbose=logger.NOTE, **kwargs):
 
     if not (isinstance(dm, numpy.ndarray) and dm.ndim == 2):
         # UHF denisty matrices
+        print("we are using unrestricted spin")
         dm = dm[0] + dm[1]
 
     with mol.with_common_orig((0,0,0)):

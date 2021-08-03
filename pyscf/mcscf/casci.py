@@ -1037,9 +1037,9 @@ if __name__ == '__main__':
     mc.fcisolver = fci.solver(mol)
     mc.natorb = 1
     emc = mc.kernel()[0]
-    print(ehf, emc, emc-ehf)
+    print((ehf, emc, emc-ehf))
     #-75.9577817425 -75.9624554777 -0.00467373522233
-    print(emc+75.9624554777)
+    print((emc+75.9624554777))
 
 #    mc = CASCI(m, 4, (3,1))
 #    #mc.fcisolver = fci.direct_spin1

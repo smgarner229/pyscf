@@ -43,6 +43,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         # not supported when mo_energy or mo_coeff is given.
         assert(mp.frozen is 0 or mp.frozen is None)
 
+
     if eris is None: eris = mp.ao2mo(mo_coeff)
 
     nocca, noccb = mp.get_nocc()
@@ -76,6 +77,8 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         emp2 -= numpy.einsum('jab,jba', t2i, eris_ovov) * .5
         if with_t2:
             t2aa[i] = t2i - t2i.transpose(0,2,1)
+            #print("t2aa")
+            #print(t2aa[i])
 
         if isinstance(eris.ovOV, numpy.ndarray) and eris.ovOV.ndim == 4:
             # When mf._eri is a custom integrals wiht the shape (n,n,n,n), the
@@ -328,6 +331,9 @@ class UMP2(mp2.MP2):
 
     def ao2mo(self, mo_coeff=None):
         if mo_coeff is None: mo_coeff = self.mo_coeff
+        #print("mo_coeff")
+        #print(mo_coeff[0])
+        #print(mo_coeff[1])
         return _make_eris(self, mo_coeff, verbose=self.verbose)
 
     make_rdm1 = make_rdm1

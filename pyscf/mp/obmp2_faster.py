@@ -55,7 +55,6 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
     niter = mp.niter
     ene_old = 0.
-    #eri_ao = mp.mol.intor('int2e_sph')
 
     print()
     print("shift = ", mp.shift)
@@ -64,7 +63,6 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
     for it in range(niter):
 
-        #h2mo = [] #numpy.zeros((nmo,nmo,nmo,nmo)) #int_transform(eri_ao, mp.mo_coeff)
         h1ao = mp._scf.get_hcore(mp.mol)
         h1mo = numpy.matmul(mp.mo_coeff.T,numpy.matmul(h1ao, mp.mo_coeff))
         
@@ -90,10 +88,6 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ### BCH 1st order  
         c0, c1 = first_BCH(mp, fock_hf, tmp1, tmp1_bar, c0)
 
-        # symmetrize c1
-        #for p in range(nmo):
-        #    for q in range(nmo):
-        #        fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
         fock += 0.5 * (c1 + c1.T)
 
         
@@ -101,12 +95,7 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ### BCH 2nd order  
         if mp.second_order:
 
-            #c0, c1 = second_BCH(mp, fock_hf, tmp1, tmp1_bar, h2mo, c0)
             c0, c1 = second_BCH(mp, fock_hf, tmp1, tmp1_bar, c0)
-            # symmetrize c1
-            #for p in range(nmo):
-            #    for q in range(nmo):
-            #        fock[p,q] += 0.5 * (c1[p,q] + c1[q,p])
             fock += 0.5 * (c1 + c1.T)
 
         ene = c0
@@ -127,6 +116,9 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         mp.mo_energy = mo_energy
         mp.mo_coeff  = mo_coeff
 
+    
+    if mp.eval_IPEA:
+        mp.make_IPEA()
 
     return ene_tot - ene_hf
 
@@ -159,10 +151,6 @@ def make_veff(mp):
 
     veff = numpy.zeros((nmo,nmo))
 
-    #for p in range(nmo):
-    #    for q in range(nmo):
-    #        for k in range(nocc):
-    #            veff[p,q] += 2.*h2mo_ggoo[p,q,k,k] - h2mo_goog[p,k,k,q]
     veff += 2.*numpy.einsum('ijkk -> ij',h2mo_ggoo) - numpy.einsum('ijjk -> ik',h2mo_goog)
 
     c0_hf = 0.
@@ -186,24 +174,11 @@ def make_amp(mp):
     h2mo = h2mo.reshape(nocc,nvir,nocc,nvir)
 
     tmp1 = numpy.zeros((nocc,nvir,nocc,nvir))
-    #for i in range(nocc):
-    #    for a in range(nvir):
-    #        for j in range(nocc):
-    #            for b in range(nvir):
-    #                A = a+nocc
-    #                B = b+nocc
-    #                x = mo_energy[i] + mo_energy[j] - mo_energy[A] - mo_energy[B] - mp.shift
-    #                tmp1[i,a,j,b] = mp.ampf * h2mo[i,a,j,b]/x
     x = numpy.tile(mo_energy[:nocc,None] - mo_energy[None,nocc:],(nocc,nvir,1,1))
     x += numpy.einsum('ijkl -> klij', x) - mp.shift
     tmp1 = mp.ampf * h2mo/x
 
     tmp1_bar = numpy.zeros((nocc,nvir,nocc,nvir))
-    #for i in range(nocc):
-    #    for a in range(nvir):
-    #        for j in range(nocc):
-    #            for b in range(nvir):
-    #                tmp1_bar[i,a,j,b] = tmp1[i,a,j,b] - 0.5 * tmp1[i,b,j,a]
     tmp1_bar = tmp1 - 0.5*numpy.einsum('ijkl -> ilkj', tmp1)         
     return tmp1, tmp1_bar
 
@@ -228,21 +203,6 @@ def first_BCH(mp, fock_hf, tmp1, tmp1_bar, c0):
     h2mo_ovog = ao2mo.general(mp._scf._eri, (co,cv,co,cg))
     h2mo_ovog = h2mo_ovog.reshape(nocc,nvir,nocc,nmo)
 
-    #for i in range(nocc):
-    #    for a in range(nvir):
-    #        for j in range(nocc):
-    #            for b in range(nvir):
-    #                A = a+nocc
-    #                B = b+nocc
-    #               #c0 -= 4. * h2mo[i,A,j,B] * tmp1_bar[i,a,j,b] ####### very old c0 #######
-    #                #c0 -= 4. * h2mo_ovov[i,a,j,b] * tmp1_bar[i,a,j,b] ####### old c0 #######
-    #                c1[j,B] += 4. * fock_hf[i,A] * tmp1_bar[i,a,j,b]
-    #                for p in range(nmo):
-    #                    #c1[p,j] += 4. * h2mo[i,A,p,B] *  tmp1_bar[i,a,j,b]
-    #                    #c1[p,B] -= 4. * h2mo[i,A,j,p] *  tmp1_bar[i,a,j,b]
-    #                    c1[p,j] += 4. * h2mo_ovgv[i,a,p,b] *  tmp1_bar[i,a,j,b]
-    #                    c1[p,B] -= 4. * h2mo_ovog[i,a,j,p] *  tmp1_bar[i,a,j,b]
-    
     c0 -= 4.*numpy.sum(numpy.multiply(h2mo_ovov,tmp1_bar))
     ####################### c1[j,B] #########################
 
@@ -336,58 +296,57 @@ def second_BCH(mp, fock_hf, tmp1, tmp1_bar, c0):
                     fock_hf[nocc:,:].T * numpy.tile(y1[:,c],(nmo,1)))
     return c0, c1
 
-#def eval_IP_EA():
-    ### evaluating IPs and EAs
-    #ip_obmp2 = []
-    #for h in range(nocc):
-    #    tmp2 = 0.
-    #    for i in range(nocc-1):
-    #        for j in range(nocc-1):
-    #            for a in range(nvir):
-    #                A = a+nocc
-    #                if i != h and j != h:
-    #                    tmp2 +=  tmp1_bar[i,a,j,h] * h2mo[i,A,j,h]
-    #
-    #    ip_obmp2.append(27.2114*(-mo_energy[h] + 2.*tmp2))
-    #
-    #
-    #tmp1_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=fock_hf.dtype)
-    #for i in range(nocc):
-    #    for a in range(nvir):
-    #        for l in range(nvir):
-    #            for b in range(nvir):
-    #                A = a+nocc
-    #                B = b+nocc
-    #                L = l+nocc
-    #                x = mo_energy[i] + mo_energy[L] - mo_energy[A] - mo_energy[B]
-    #                tmp1_new[i,a,l,b] = 1. * h2mo[i,A,L,B]/x
-    #                
-    #tmp1_bar_new = numpy.zeros((nocc,nvir,nvir,nvir), dtype=tmp1.dtype)
-    #for i in range(nocc):
-    #    for a in range(nvir):
-    #        for l in range(nvir):
-    #            for b in range(nvir):
-    #                tmp1_bar_new[i,a,l,b] = tmp1_new[i,a,l,b] - 0.5 * tmp1_new[i,b,l,a]
-    #                
-    #ea_obmp2 = []
-    #for l in range(nvir):
-    #    L = l+nocc
-    #    tmp2 = 0.
-    #    for a in range(nvir):
-    #        for b in range(nvir):
-    #            for i in range(nocc):
-    #                A = a+nocc
-    #                B = b+nocc
-    #                if a != l and b != l:
-    #                    tmp2 +=  tmp1_bar_new[i,a,l,b] * h2mo[i,A,L,B]
-    #
-    #    ea_obmp2.append(27.2114*(-mo_energy[L] - 2.*tmp2))
-    #
-    ##print("ip_obmp2 (in eV)", flush=True)
-    ##print(ip_obmp2[nocc-1], flush=True)
-    #print("ea_obmp2 (in eV)", flush=True)
-    #print(ea_obmp2, flush=True)
+def make_IPEA(mp):
+    eV = 27.2114
+    nocc = mp.nocc
+    nvir = mp.nmo - nocc
+    mo_energy = mp.mo_energy
+    co = numpy.asarray(mp.mo_coeff[:,:nocc], order='F')
+    cv = numpy.asarray(mp.mo_coeff[:,nocc:], order='F')
 
+    ## evaluating IP 
+    h2mo_ovoo = ao2mo.general(mp._scf._eri, (co,cv,co,co), compact=False)
+    h2mo_ovoo = h2mo_ovoo.reshape(nocc,nvir,nocc,nocc)
+
+    h = nocc-1 #HOMO
+    tmp1_new = numpy.zeros((nocc,nvir,nocc))
+    for i in range(nocc):
+        for a in range(nvir):
+            for j in range(nocc):
+                x = mo_energy[i] + mo_energy[j] - mo_energy[a+nocc] - mo_energy[h]
+                tmp1_new[i,a,j] = mp.ampf * h2mo_ovoo[i,a,j,h]/x
+    tmp1_bar_new = tmp1_new - 0.5*numpy.transpose(tmp1_new,(2,1,0))
+    tmp2 = 0.
+    for i in range(nocc-1):
+        for j in range(nocc-1):
+            for a in range(nvir):
+                tmp2 +=  tmp1_bar_new[i,a,j] * h2mo_ovoo[i,a,j,h]
+    ip_obmp2 = eV*(-mo_energy[h] + 2.*tmp2)
+
+    print(tmp2)
+
+
+    ## evaluating EA 
+    h2mo_ovvv = ao2mo.general(mp._scf._eri, (co,cv,cv,cv), compact=False)
+    h2mo_ovvv = h2mo_ovvv.reshape(nocc,nvir,nvir,nvir)
+
+    L = nocc #LUMO
+    tmp1_new = numpy.zeros((nocc,nvir,nvir))
+    for i in range(nocc):
+        for a in range(nvir):
+            for b in range(nvir):
+                x = mo_energy[i] + mo_energy[L] - mo_energy[a+nocc] - mo_energy[b+nocc]
+                tmp1_new[i,a,b] = mp.ampf * h2mo_ovvv[i,a,0,b]/x
+    tmp1_bar_new = tmp1_new - 0.5*numpy.transpose(tmp1_new,(0,2,1))
+    tmp2 = 0.
+    for a in range(1,nvir):
+        for b in range(1,nvir):
+            for i in range(nocc):
+                tmp2 +=  tmp1_bar_new[i,a,b] * h2mo_ovvv[i,a,0,b]
+    ea_obmp2 = eV*(-mo_energy[L] - 2.*tmp2)
+    
+    print("obmp2 homo (in eV)", -eV*mo_energy[h], "ip_obmp2 (in eV)", ip_obmp2, flush=True)
+    print("obmp2 lumo (in eV)", -eV*mo_energy[L], "ea_obmp2 (in eV)", ea_obmp2,  flush=True)
 
 
 def make_rdm1(mp): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
@@ -693,6 +652,11 @@ class OBMP2(lib.StreamObject):
     #make_rdm2 = make_rdm2
 
     #as_scanner = as_scanner
+
+    eval_IPEA = False
+    make_IPEA = make_IPEA
+
+
 
     def density_fit(self, auxbasis=None, with_df=None):
         from pyscf.mp import dfmp2

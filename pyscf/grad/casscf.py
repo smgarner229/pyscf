@@ -98,6 +98,9 @@ def kernel(mc, mo_coeff=None, ci=None, atmlst=None, mf_grad=None,
         shl0, shl1, p0, p1 = aoslices[ia]
         h1ao = hcore_deriv(ia)
         de[k] += numpy.einsum('xij,ij->x', h1ao, dm1)
+        test = numpy.einsum('xij,ij->x', h1ao, dm1)
+        print("test")
+        print(test)
         de[k] -= numpy.einsum('xij,ij->x', s1[:,p0:p1], dme0[p0:p1]) * 2
 
         q1 = 0

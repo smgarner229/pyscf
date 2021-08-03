@@ -49,7 +49,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
     nocc = mp.nocc
     nvir = mp.nmo - nocc
-    eia = mo_energy[:nocc,None] - mo_energy[None,nocc:]
+    eia = mo_energy[:nocc,None] - mo_energy[None,nocc:] #-1.0
 
     if with_t2:
         t2 = numpy.empty((nocc,nocc,nvir,nvir), dtype=eris.ovov.dtype)
