@@ -163,24 +163,17 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         c0, c1_a, c1_b = first_BCH(mp, fock_hfa, fock_hfb, tmp1_bar_aa, tmp1_bar_bb, tmp1_bar_ab, tmp1_bar_ba,c0)
         
         # symmetrize c1
-        for p in range(nmoa):
-            for q in range(nmoa):
-                fock_a[p,q] += 0.5 * (c1_a[p,q] + c1_a[q,p])
-        for p in range(nmob):
-            for q in range(nmob):
-                fock_b[p,q] += 0.5 * (c1_b[p,q] + c1_b[q,p])
-  
+        fock_a += 0.5 * (c1_a + c1_a.T)
+        fock_b += 0.5 * (c1_b + c1_b.T)  
 
+        #####################
+        ### BCH 2nd order  
         if mp.second_order:
             c0, c1_a, c1_b = second_BCH(mp, fock_a, fock_b, fock_hfa, fock_hfb, tmp1_aa, tmp1_bb, tmp1_ab, tmp1_ba, tmp1_bar_aa, tmp1_bar_bb, tmp1_bar_ab, tmp1_bar_ba, c0)
 
         # symmetrize c1
-            for p in range(nmoa):
-                for q in range(nmoa):
-                    fock_a[p,q] += 0.5 * (c1_a[p,q] + c1_a[q,p])
-            for p in range(nmob):
-                for q in range(nmob):
-                    fock_b[p,q] += 0.5 * (c1_b[p,q] + c1_b[q,p])
+            fock_a += 0.5 * (c1_a + c1_a.T)
+            fock_b += 0.5 * (c1_b + c1_b.T) 
 
         ene = c0
         for i in range(nocca):
@@ -572,21 +565,17 @@ def second_BCH(mp, fock_a, fock_b, fock_hfa, fock_hfb, tmp1_aa, tmp1_bb, tmp1_ab
                 *numpy.einsum('ijkl ->jikl',numpy.tile(tmp1_bar_bb[:,c,:,:],(nvirb,1,1,1)))   
         y1_ba += numpy.einsum('ijkl -> ilkj',numpy.tile(fock_hfb[noccb:,c-nvirb].T,(noccb,nvira,nocca,1))) \
                     *numpy.einsum('ijkl ->jikl',numpy.tile(tmp1_bar_ba[:,c,:,:],(nvirb,1,1,1)))
-    #for k in range(noccb):
-    #    c1_b[:noccb,k] += 1.*numpy.einsum('ijkl -> i',tmp1_bb \
-    #                            * numpy.tile(y1_bb[k,:,:,:],(noccb,1,1,1)))
+    
     for k in range(noccb):
-        for i in range(noccb):
-            for a in range(nvirb):
-                for j in range(noccb):
-                    for b in range(nvira):
-                        c1_b[i,k] += 1. * tmp1_bb[i,a,j,b] * y1_bb[k,a,j,b]
-                for j in range(nocca):
-                    for b in range(nvira):
-                        if mp.break_sym:
-                            c1_b[i,k] += 1. * tmp1_ba[i,a,j,b] * y1_ba[i,a,k,b]
-                        else:
-                            c1_b[i,k] += 1. * tmp1_ba[i,a,j,b] * y1_ba[k,a,j,b]
+        c1_b[:noccb,k] += 1.*numpy.einsum('ijkl -> i',tmp1_bb \
+                                * numpy.tile(y1_bb[k,:,:,:],(noccb,1,1,1)))
+    for k in range(noccb):
+        if mp.break_sym:
+            c1_b[:noccb,k] += 1.*numpy.einsum('ijkl -> i',tmp1_ba \
+                  * numpy.einsum('ijkl -> jkil',numpy.tile(y1_ba[:,:,k,:],(nocca,1,1,1))))
+        else:
+            c1_b[:noccb,k] += 1.*numpy.einsum('ijkl -> i',tmp1_ba \
+                                * numpy.tile(y1_ba[k,:,:,:],(noccb,1,1,1)))
                             
 
     #[4]
