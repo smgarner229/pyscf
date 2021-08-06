@@ -24,6 +24,7 @@ from pyscf.mp import gmp2
 from pyscf.mp import obmp2
 from pyscf.mp import obmp2_faster
 from pyscf.mp import uobmp2
+from pyscf.mp import uobmp2_faster
 from pyscf.mp import uobmp2_scs
 
 def MP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
@@ -95,6 +96,10 @@ def UOBMP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
     __doc__ = uobmp2.UOBMP2.__doc__
     if isinstance(mf, scf.uhf.UHF):
         return uobmp2.UOBMP2(mf, frozen, mo_coeff, mo_occ)
+def UOBMP2_faster(mf, frozen=0, mo_coeff=None, mo_occ=None):
+    __doc__ = uobmp2_faster.UOBMP2.__doc__
+    if isinstance(mf, scf.uhf.UHF):
+        return uobmp2_faster.UOBMP2(mf, frozen, mo_coeff, mo_occ)
 
 def UOBMP2_SCS(mf, frozen=0, mo_coeff=None, mo_occ=None):
     __doc__ = uobmp2_scs.UOBMP2_SCS.__doc__
