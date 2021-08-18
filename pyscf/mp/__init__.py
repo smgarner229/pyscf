@@ -103,6 +103,10 @@ def UOBMP2(mf, frozen=0, mo_coeff=None, mo_occ=None):
     __doc__ = uobmp2.UOBMP2.__doc__
     if isinstance(mf, scf.uhf.UHF):
         return uobmp2.UOBMP2(mf, frozen, mo_coeff, mo_occ)
+def UOBMP2_faster(mf, frozen=0, mo_coeff=None, mo_occ=None):
+    __doc__ = uobmp2_faster.UOBMP2.__doc__
+    if isinstance(mf, scf.uhf.UHF):
+        return uobmp2_faster.UOBMP2(mf, frozen, mo_coeff, mo_occ)
 
 def UOBMP2_faster(mf, frozen=0, mo_coeff=None, mo_occ=None):
     __doc__ = uobmp2_faster.UOBMP2.__doc__

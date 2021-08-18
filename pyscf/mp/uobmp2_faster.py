@@ -100,19 +100,6 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     print ("niter = ", mp.niter)
 
     for it in range(niter):
-        #if it == 5:
-        #    print("mo_coeff_init")
-        #    print(mo_coeff_init[0])
-        #    print("mo_coeff")
-        #    print(mo_coeff[0])
-
-        #if it > 3:
-        #    mo_coeff[0] = 0.5*mo_coeff[0] + 0.5*mo_coeff_init[0]
-
-        #h2mo_aa = int_transform_ss(eri_ao, mo_coeff[0])
-        #h2mo_bb = int_transform_ss(eri_ao, mo_coeff[1])
-        #h2mo_ab = int_transform_os(eri_ao, mo_coeff[0], mo_coeff[1])
-        #h2mo_ba = int_transform_os(eri_ao, mo_coeff[1], mo_coeff[0])
         
         h1ao = mp._scf.get_hcore(mp.mol)
         h1mo_a = numpy.matmul(mo_coeff[0].T,numpy.matmul(h1ao,mo_coeff[0]))
@@ -144,6 +131,9 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
             
         c0 *= 0.5
         ene_hf += c0
+
+
+        
 
         ####################
         #### MP1 amplitude
