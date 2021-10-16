@@ -88,16 +88,13 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
 
     shift = mp.shift
 
-
     niter = mp.niter
     ene_old = 0.
-    #thres = 1e-8
     conv = False 
     eri_ao = mp.mol.intor('int2e_sph')
 
-    print("shift = ", mp.shift)
-    print ("thresh = ", mp.thresh)
-    print ("niter = ", mp.niter)
+    logger.info(mp, 'shift = %g', mp.shift)
+    logger.info(mp, 'thresh = %g ', mp.thresh)
 
     for it in range(niter):
         
@@ -131,8 +128,6 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
             
         c0 *= 0.5
         ene_hf += c0
-
-
         
 
         ####################
@@ -174,17 +169,15 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene_tot = ene + nuc
         de = abs(ene_tot - ene_old)
         ene_old = ene_tot
-        print()
-        print("========================")
-        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de, flush=True)
-        print()
+        logger.info(mp, '========================')
+        logger.info(mp, 'iter = %d  energy = %8.6f energy diff = %8.6f', it, ene_tot, de)
 
         if de < mp.thresh:
             conv = True
             break
 
         if mp.eval_fc:
-            print("Fermi contact using HF-like density")
+            logger.info(mp, 'Fermi contact using HF-like density')
             rdm1 = mp.make_rdm1()
             #R_reslv = None #[-1,4.0] #so primitive
             mp.make_fc(rdm1) #, it, R_reslv)
@@ -227,7 +220,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     e_corr = ene_tot - ene_hf
     ss, s = mp._scf.spin_square((mo_coeff[0][:,mo_occ[0]>0],
                                  mo_coeff[1][:,mo_occ[1]>0]), mp._scf.get_ovlp())
-    print('multiplicity <S^2> = %.8g' %ss, '2S+1 = %.8g' %s)
+    logger.info(mp, 'multiplicity <S^2> = %.8g 2S+1 = %.8g', ss, s)
 
     #exit()
     #print("final mo_coeff")
@@ -240,6 +233,11 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         print("UOB-MP2 has not converged")
 
     print("UOB-MP2 energy = ", ene_tot)
+
+    if mp.eval_IPEA:
+        mp.make_IPEA()
+
+    ######################
 
 def make_veff(mp):
     nocca, noccb = mp.get_nocc()
@@ -748,6 +746,87 @@ def second_BCH(mp, fock_a, fock_b, fock_hfa, fock_hfb, tmp1_aa, tmp1_bb, tmp1_ab
     return c0, c1_a, c1_b
     
 
+def make_IPEA(mp):
+    eV = 27.2114
+    nocca, noccb = mp.get_nocc()
+    nmoa, nmob = mp.get_nmo()
+    nvira, nvirb = nmoa-nocca, nmob-noccb
+    mo_energy = mp.mo_energy
+    mo_coeff  = mp.mo_coeff
+
+    co_a = numpy.asarray(mo_coeff[0][:,:nocca], order='F')
+    cv_a = numpy.asarray(mo_coeff[0][:,nocca:], order='F')
+    co_b= numpy.asarray(mo_coeff[1][:,:noccb], order='F')
+    cv_b = numpy.asarray(mo_coeff[1][:,noccb:], order='F')
+
+    ## evaluating IP 
+    h2mo_ovoo_aa = ao2mo.general(mp._scf._eri, (co_a,cv_a,co_a,co_a), compact=False)
+    h2mo_ovoo_aa = h2mo_ovoo_aa.reshape(nocca,nvira,nocca,nocca)
+
+    h2mo_ovoo_ba = ao2mo.general(mp._scf._eri, (co_b,cv_b,co_a,co_a), compact=False)
+    h2mo_ovoo_ba = h2mo_ovoo_ba.reshape(noccb,nvirb,nocca,nocca)
+
+    h = nocca-1 #HOMO
+    tmp1_aa = numpy.zeros((nocca,nvira,nocca))
+    for i in range(nocca):
+        for a in range(nvira):
+            for j in range(nocca):
+                x = mo_energy[0][i] + mo_energy[0][j] - mo_energy[0][a+nocca] - mo_energy[0][h] - mp.shift
+                tmp1_aa[i,a,j] = mp.ampf * h2mo_ovoo_aa[i,a,j,h]/x
+    tmp1_ba = numpy.zeros((noccb,nvirb,nocca))
+    for i in range(noccb):
+        for a in range(nvirb):
+            for j in range(nocca):
+                x = mo_energy[1][i] + mo_energy[0][j] - mo_energy[1][a+noccb] - mo_energy[0][h] - mp.shift
+                tmp1_ba[i,a,j] = mp.ampf * h2mo_ovoo_ba[i,a,j,h]/x
+    tmp1_bar_aa = tmp1_aa - numpy.transpose(tmp1_aa,(2,1,0))
+    tmp1_bar_ba = tmp1_ba
+    tmp2 = 0.
+    for a in range(nvira):
+        for i in range(nocca-1):
+            for j in range(nocca-1):
+                tmp2 +=  tmp1_bar_aa[i,a,j] * h2mo_ovoo_aa[i,a,j,h]
+        for i in range(noccb-1):
+            for j in range(noccb-1):
+                tmp2 +=  tmp1_bar_ba[i,a,j] * h2mo_ovoo_ba[i,a,j,h]
+    ip_obmp2 = eV*(-mo_energy[0][h] + 1.*tmp2)
+
+    ## evaluating EA 
+    h2mo_ovvv_aa = ao2mo.general(mp._scf._eri, (co_a,cv_a,cv_a,cv_a), compact=False)
+    h2mo_ovvv_aa = h2mo_ovvv_aa.reshape(nocca,nvira,nvira,nvira)
+
+    h2mo_ovvv_ba = ao2mo.general(mp._scf._eri, (co_b,cv_b,cv_a,cv_a), compact=False)
+    h2mo_ovvv_ba = h2mo_ovvv_ba.reshape(noccb,nvirb,nvira,nvira)
+    
+    L = nocca #LUMO
+    tmp1_aa = numpy.zeros((nocca,nvira,nvira))
+    for i in range(nocca):
+        for a in range(nvira):
+            for b in range(nvira):
+                x = mo_energy[0][i] + mo_energy[0][L] - mo_energy[0][a+nocca] - mo_energy[0][b+nocca] - mp.shift
+                tmp1_aa[i,a,b] = mp.ampf * h2mo_ovvv_aa[i,a,0,b]/x
+    tmp1_ba = numpy.zeros((noccb,nvirb,nvira))
+    for i in range(noccb):
+        for a in range(nvirb):
+            for b in range(nvira):
+                x = mo_energy[1][i] + mo_energy[0][L] - mo_energy[1][a+noccb] - mo_energy[0][b+nocca] - mp.shift
+                tmp1_ba[i,a,b] = mp.ampf * h2mo_ovvv_ba[i,a,0,b]/x
+    tmp1_bar_aa = tmp1_aa - numpy.transpose(tmp1_aa,(0,2,1))
+    tmp1_bar_ba = tmp1_ba 
+    tmp2 = 0.
+    for b in range(1,nvira):
+        for a in range(1,nvira):
+            for i in range(nocca):
+                tmp2 +=  tmp1_bar_aa[i,a,b] * h2mo_ovvv_aa[i,a,0,b]
+        for a in range(1,nvirb):
+            for i in range(noccb):
+                tmp2 +=  tmp1_bar_ba[i,a,b] * h2mo_ovvv_ba[i,a,0,b]
+    ea_obmp2 = eV*(-mo_energy[0][L] - 1.*tmp2)
+    
+    logger.info(mp, "obmp2 homo %8.6f (eV) ip_obmp2 %8.6f (eV)", -eV*mo_energy[0][h], ip_obmp2)
+    logger.info(mp, "obmp2 lumo %8.6f (eV) ea_obmp2 %8.6f (eV)", -eV*mo_energy[0][L], ea_obmp2)
+    
+
 def int_transform_ss(eri_ao, mo_coeff):
     nao = mo_coeff.shape[0]
     nmo = mo_coeff.shape[1]
@@ -991,13 +1070,13 @@ def make_rdm1(mp, use_t2=False, use_ao=True, **kwargs):
         dov = numpy.zeros((nocca,nvira))
         dOV = numpy.zeros((noccb,nvirb))
         d1 = (doo, (dov, dOV), (dov.T, dOV.T), dvv)
-        rdm1 = uccsd_rdm._make_rdm1(mp, d1, with_frozen=True, ao_repr=False)
-        if use_ao:
-            rdm1_ao =  (reduce(numpy.dot, (mo_coeff[0], rdm1[0], mo_coeff[0].T)), 
-                        reduce(numpy.dot, (mo_coeff[1], rdm1[1], mo_coeff[1].T)))
-            return rdm1_ao
-        else:
-            return rdm1
+        rdm1 = uccsd_rdm._make_rdm1(mp, d1, with_frozen=False, ao_repr=use_ao)
+        #if use_ao:
+        #    rdm1_ao =  (reduce(numpy.dot, (mo_coeff[0], rdm1[0], mo_coeff[0].T)), 
+        #                reduce(numpy.dot, (mo_coeff[1], rdm1[1], mo_coeff[1].T)))
+        #    return rdm1_ao
+        #else:
+        return rdm1
 # DO NOT make tag_array for DM here because the DM arrays may be modified and
 # passed to functions like get_jk, get_vxc.  These functions may take the tags
 # (mo_coeff, mo_occ) to compute the potential if tags were found in the DM
@@ -1068,7 +1147,7 @@ def make_fc(mp, dm0, it=None, R_reslv=None, hfc_nuc=None, verbose=None):
 
         #sd = fcsd + numpy.eye(3) * fc
 
-        print('FC of atom %d :'%atm_id, '%8.6f (in MHz)' %(2*fac * nuc_gyro * fc))
+        logger.info(mp, 'FC of atom %d : %8.6f (in MHz)', atm_id, (2*fac * nuc_gyro * fc))
         #if hfcobj.verbose >= logger.INFO:
         #    _write(hfcobj, align(fac*nuc_gyro*sd)[0], 'SD of atom %d (in MHz)' % atm_id)
         #hfc.append(fac * nuc_gyro * fcsd)
@@ -1128,6 +1207,8 @@ class UOBMP2(obmp2.OBMP2):
     #make_rdm2 = make_rdm2
     make_fc = make_fc
     eval_fc = False
+    make_IPEA = make_IPEA
+    eval_IPEA = False
 
     def nuc_grad_method(self):
         from pyscf.grad import ump2

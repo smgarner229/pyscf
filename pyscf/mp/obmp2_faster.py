@@ -56,10 +56,10 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
     niter = mp.niter
     ene_old = 0.
 
-    print()
-    print("shift = ", mp.shift)
-    print ("thresh = ", mp.thresh)
-    print()
+    #print()
+    logger.info(mp, 'shift = %g', mp.shift)
+    logger.info(mp, 'thresh = %g ', mp.thresh)
+    #print()
 
     for it in range(niter):
 
@@ -105,7 +105,7 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene_tot = ene + nuc
         de = abs(ene_tot - ene_old)
         ene_old = ene_tot
-        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de, flush=True)
+        logger.info(mp, 'iter = %d energy = %8.6f energy diff = %8.6f', it, ene_tot, de)
 
         if de < mp.thresh:
             break
@@ -323,7 +323,7 @@ def make_IPEA(mp):
                 tmp2 +=  tmp1_bar_new[i,a,j] * h2mo_ovoo[i,a,j,h]
     ip_obmp2 = eV*(-mo_energy[h] + 2.*tmp2)
 
-    print(tmp2)
+    #print(tmp2)
 
 
     ## evaluating EA 
@@ -345,11 +345,11 @@ def make_IPEA(mp):
                 tmp2 +=  tmp1_bar_new[i,a,b] * h2mo_ovvv[i,a,0,b]
     ea_obmp2 = eV*(-mo_energy[L] - 2.*tmp2)
     
-    print("obmp2 homo (in eV)", -eV*mo_energy[h], "ip_obmp2 (in eV)", ip_obmp2, flush=True)
-    print("obmp2 lumo (in eV)", -eV*mo_energy[L], "ea_obmp2 (in eV)", ea_obmp2,  flush=True)
+    logger.info(mp, "obmp2 homo %8.6f (eV) ip_obmp2 %8.6f (eV)", -eV*mo_energy[h], ip_obmp2)
+    logger.info(mp, "obmp2 lumo %8.6f (eV) ea_obmp2 %8.6f (eV)", -eV*mo_energy[L], ea_obmp2)
 
 
-def make_rdm1(mp): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
+def make_rdm1(mp, use_ao=True): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
     '''Spin-traced one-particle density matrix.
     The occupied-virtual orbital response is not included.
 
@@ -389,8 +389,7 @@ def make_rdm1(mp): # , t2=None, eris=None, verbose=logger.NOTE, ao_repr=False):
     nvir = dvv.shape[0]
     dov = numpy.zeros((nocc,nvir), dtype=doo.dtype)
     dvo = dov.T
-    return ccsd_rdm._make_rdm1(mp, (doo, dov, dvo, dvv), with_frozen=True,
-                               ao_repr=False)
+    return ccsd_rdm._make_rdm1(mp, (doo, dov, dvo, dvv), with_frozen=False, ao_repr=use_ao)
 
 def _gamma1_intermediates(mp, t2=None, eris=None):
     if t2 is None: t2 = mp.t2
