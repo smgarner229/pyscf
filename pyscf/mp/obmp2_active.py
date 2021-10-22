@@ -116,7 +116,7 @@ def kernel(mp,  mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2,
         ene_tot = ene + nuc
         de = abs(ene_tot - ene_old)
         ene_old = ene_tot
-        print('iter = %d'%it, ' energy = %8.6f'%ene_tot, ' energy diff = %8.6f'%de, flush=True)
+        logger.info(mp, 'iter = %d  energy = %8.6f energy diff = %8.6f', it, ene_tot, de)
 
         if de < mp.thresh:
             break
