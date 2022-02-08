@@ -683,20 +683,25 @@ def state_average_(casscf, weights=(0.5,0.5)):
     old_finalize = casscf._finalize
     def _finalize():
         old_finalize()
-        casscf.e_tot = e_states[0]
+        #casscf.e_tot = e_states[0]
+        casscf.e_tot = e_states
         logger.note(casscf, 'CASCI energy for each state')
-        if has_spin_square:
-            ncas = casscf.ncas
-            nelecas = casscf.nelecas
-            for i, ei in enumerate(casscf.e_tot):
-                ss = fcibase_class.spin_square(casscf.fcisolver, casscf.ci[i],
-                                               ncas, nelecas)[0]
-                logger.note(casscf, '  State %d weight %g  E = %.15g S^2 = %.7f',
-                            i, weights[i], ei, ss)
-        else:
-            for i, ei in enumerate(casscf.e_tot):
-                logger.note(casscf, '  State %d weight %g  E = %.15g',
-                            i, weights[i], ei)
+        try:
+            #if False: 
+            if has_spin_square:
+                ncas = casscf.ncas
+                nelecas = casscf.nelecas
+                for i, ei in enumerate(casscf.e_tot):
+                    ss = fcibase_class.spin_square(casscf.fcisolver, casscf.ci[i],
+                                                   ncas, nelecas)[0]
+                    logger.note(casscf, '  State %d weight %g  E = %.15g S^2 = %.7f',
+                                i, weights[i], ei, ss)
+            else:
+                for i, ei in enumerate(casscf.e_tot):
+                    logger.note(casscf, '  State %d weight %g  E = %.15g',
+                                i, weights[i], ei)
+        except:
+            pass
         return casscf
     casscf._finalize = _finalize
     return casscf
