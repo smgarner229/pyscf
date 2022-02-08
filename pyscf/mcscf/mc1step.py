@@ -730,7 +730,7 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
         
         print()
         ss_target = 0.5*casscf.target_state_spin*(0.5*casscf.target_state_spin+1)
-        if abs(ss - ss_target) < 1e-2:
+        if abs(ss - ss_target) < 1e-1:
             W_list.append(W)
             s_list.append(s)
         #print "Natural orbital analysis: "
