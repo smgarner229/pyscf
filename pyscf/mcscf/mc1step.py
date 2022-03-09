@@ -714,6 +714,8 @@ def select_target_state(casscf, mo_coeff, fcivec, e_tot, envs, target_state, nro
             W = ddmNorm
         elif casscf.is_only_W:
             W = numpy.square(omega - e_tot[s]) + eval_Hsqr(s)[0]
+        elif casscf.is_only_H2:
+            W = eval_Hsqr(s)[0]
         elif casscf.is_only_E:
             W = numpy.square(omega - e_tot[s])
         elif casscf.is_only_dipole:
@@ -1589,6 +1591,7 @@ class CASSCF(casci.CASCI):
     is_line_search   = getattr(__config__, 'mcscf_mc1step_CASSCF_is_line_search', False)
     is_only_ddm      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_ddm', False)
     is_only_W      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_W', False)
+    is_only_H2     = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_H2', False)
     is_only_E      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_E', False)
     is_only_dipole      = getattr(__config__, 'mcscf_mc1step_CASSCF_is_only_dipole', False)
     is_ddm_and_dipole = getattr(__config__, 'mcscf_mc1step_CASSCF_is_ddm_and_dipole', False)
@@ -1630,7 +1633,7 @@ class CASSCF(casci.CASCI):
                     'sorting_mo_energy', 'is_use_gmres', 'gmres_conv_tol',
                     'gmres_max_cycle', 'gmres_hess_shift', 'is_gmres_trust_region', 
                     'is_gmres_precond', 'is_gmres_conv_dynm', 
-                    'is_line_search', 'is_only_ddm', 'is_only_W', 'is_only_E', 'is_only_dipole', 'is_ddm_and_dipole',
+                    'is_line_search', 'is_only_ddm', 'is_only_W','is_only_H2', 'is_only_E', 'is_only_dipole', 'is_ddm_and_dipole',
                     'target_state', 'is_select_state', 'is_target_dipole',  'sa_geom_opt',
                     'target_state_spin', 'is_use_sCI', 'is_save_sCIout'))
         self._keys = set(self.__dict__.keys()).union(keys)
@@ -1669,6 +1672,7 @@ class CASSCF(casci.CASCI):
                 log.info('is_target_dipole = %s', self.is_select_state)
                 log.info('is_only_ddm = %s', self.is_only_ddm)
                 log.info('is_only_W = %s', self.is_only_W)
+                log.info('is_only_H2 = %s', self.is_only_H2)
                 log.info('is_only_E = %s', self.is_only_E)
                 log.info('is_only_dipole = %s', self.is_only_dipole)
                 log.info('is_ddm_and_dipole = %s', self.is_ddm_and_dipole)
