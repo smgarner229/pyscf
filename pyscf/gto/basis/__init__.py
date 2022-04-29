@@ -306,7 +306,7 @@ ALIAS = {
     'ccecpccpv6z'   : join('ccecp-basis', 'ccECP', 'ccECP_cc-pV6Z.dat'),
     'ccecpaugccpvdz': join('ccecp-basis', 'ccECP', 'ccECP_aug-cc-pVDZ.dat'),
     'ccecpaugccpvtz': join('ccecp-basis', 'ccECP', 'ccECP_aug-cc-pVTZ.dat'),
-    'ccecpaugccpvtz': join('ccecp-basis', 'ccECP', 'ccECP_augSP-cc-pVTZ.dat'),
+    'ccecpaugspccpvtz': join('ccecp-basis', 'ccECP', 'ccECP_augSP-cc-pVTZ.dat'),
     'ccecpaugccpvqz': join('ccecp-basis', 'ccECP', 'ccECP_aug-cc-pVQZ.dat'),
     'ccecpaugccpv5z': join('ccecp-basis', 'ccECP', 'ccECP_aug-cc-pV5Z.dat'),
     'ccecpaugccpv6z': join('ccecp-basis', 'ccECP', 'ccECP_aug-cc-pV6Z.dat'),
